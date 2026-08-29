@@ -1,0 +1,6 @@
+# Godot generated files
+.godot/
+
+# Local editor state
+.vscode/
+.idea/

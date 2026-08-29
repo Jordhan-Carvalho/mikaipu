@@ -1,0 +1,27 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/battle/battle_test.gd" id="1_battle"]
+[ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="2_camera"]
+[ext_resource type="PackedScene" path="res://scenes/formations/formation.tscn" id="3_formation"]
+[ext_resource type="Script" path="res://scripts/input/formation_input.gd" id="4_input"]
+
+[node name="BattleTest" type="Node3D"]
+script = ExtResource("1_battle")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, -25, 0)
+light_energy = 1.1
+shadow_enabled = true
+
+[node name="RTSCamera" type="Camera3D" parent="."]
+current = true
+script = ExtResource("2_camera")
+
+[node name="Formation" parent="." instance=ExtResource("3_formation")]
+
+[node name="FormationInput" type="Node" parent="."]
+script = ExtResource("4_input")
+camera_path = NodePath("../RTSCamera")
+formation_path = NodePath("../Formation")
