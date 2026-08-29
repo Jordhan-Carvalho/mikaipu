@@ -1,9 +1,11 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/battle_test.gd" id="1_battle"]
 [ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://scenes/formations/formation.tscn" id="3_formation"]
 [ext_resource type="Script" path="res://scripts/input/formation_input.gd" id="4_input"]
+[ext_resource type="Script" path="res://scripts/battle/combat_resolver.gd" id="5_combat"]
+[ext_resource type="Script" path="res://scripts/battle/combat_hud.gd" id="6_hud"]
 
 [node name="BattleTest" type="Node3D"]
 script = ExtResource("1_battle")
@@ -19,9 +21,23 @@ shadow_enabled = true
 current = true
 script = ExtResource("2_camera")
 
-[node name="Formation" parent="." instance=ExtResource("3_formation")]
+[node name="PlayerFormation" parent="." instance=ExtResource("3_formation")]
+initial_center = Vector3(0, 0, 10)
+initial_facing = Vector3(0, 0, -1)
+soldier_color = Color(0.32, 0.65, 0.95, 1)
+
+[node name="EnemyFormation" parent="." instance=ExtResource("3_formation")]
+initial_center = Vector3(0, 0, -10)
+initial_facing = Vector3(0, 0, 1)
+soldier_color = Color(0.9, 0.33, 0.3, 1)
 
 [node name="FormationInput" type="Node" parent="."]
 script = ExtResource("4_input")
 camera_path = NodePath("../RTSCamera")
-formation_path = NodePath("../Formation")
+formation_path = NodePath("../PlayerFormation")
+
+[node name="CombatResolver" type="Node" parent="."]
+script = ExtResource("5_combat")
+
+[node name="CombatHud" type="CanvasLayer" parent="."]
+script = ExtResource("6_hud")

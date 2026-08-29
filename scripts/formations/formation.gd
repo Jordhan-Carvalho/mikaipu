@@ -2,15 +2,27 @@ class_name Formation
 extends Node3D
 
 const SOLDIER_SCENE := preload("res://scenes/units/soldier.tscn")
+enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
+
 @export var soldier_count := 30
 @export var columns := 10
 @export var spacing := 1.4
 @export var soldier_speed := 7.0
+@export var unit_name := "Spearmen"
+@export var initial_center := Vector3(0.0, 0.0, 3.0)
+@export var initial_facing := Vector3(0.0, 0.0, -1.0)
+@export var soldier_color := Color("#d5bc70")
+@export var health_per_soldier := 100.0
 
 var soldiers: Array[Soldier] = []
 var destination := Vector3(0.0, 0.0, 3.0)
 var facing := Vector3(0.0, 0.0, -1.0)
 var selected := false
+var combat_state := CombatState.IDLE
+var combat_target: Formation
+var receiving_direction := "NONE"
+var max_health := 0.0
+var current_health := 0.0
 var _preview_active := false
 var _preview_destination := Vector3.ZERO
 var _preview_facing := Vector3.FORWARD
@@ -20,11 +32,16 @@ var _debug_material: StandardMaterial3D
 
 func _ready() -> void:
 	_create_debug_mesh()
+	destination = _flat(initial_center)
+	facing = _safe_facing(initial_facing, Vector3.FORWARD)
+	max_health = float(soldier_count) * health_per_soldier
+	current_health = max_health
 	for slot in _calculate_slots(destination, facing):
 		var soldier := SOLDIER_SCENE.instantiate() as Soldier
 		soldier.movement_speed = soldier_speed
 		add_child(soldier)
 		soldier.global_position = slot
+		soldier.set_placeholder_color(soldier_color)
 		soldier.set_desired_slot(slot, facing)
 		soldiers.append(soldier)
 	_rebuild_debug_mesh()
@@ -34,8 +51,11 @@ func _process(_delta: float) -> void:
 		_rebuild_debug_mesh()
 
 func issue_order(new_destination: Vector3, new_facing: Vector3) -> void:
+	if combat_state == CombatState.ENGAGED or combat_state == CombatState.DEFEATED:
+		return
 	destination = _flat(new_destination)
 	facing = _safe_facing(new_facing, facing)
+	combat_state = CombatState.MOVING
 	_apply_slots(destination, facing)
 	clear_order_preview()
 
@@ -56,35 +76,102 @@ func set_selected(value: bool) -> void:
 	_rebuild_debug_mesh()
 
 func contains_ground_point(world_position: Vector3) -> bool:
+	var alive_count := get_alive_count()
+	if alive_count == 0:
+		return false
 	var right := facing.cross(Vector3.UP).normalized()
 	var relative := _flat(world_position) - get_current_center()
-	var half_width := (mini(columns, soldier_count) - 1) * spacing * 0.5 + 0.65
-	var half_depth := (get_row_count() - 1) * spacing * 0.5 + 0.65
+	var half_width := (mini(columns, alive_count) - 1) * spacing * 0.5 + 0.65
+	var half_depth := (get_row_count(alive_count) - 1) * spacing * 0.5 + 0.65
 	return absf(relative.dot(right)) <= half_width and absf(relative.dot(facing)) <= half_depth
 
 func get_current_center() -> Vector3:
-	if soldiers.is_empty(): return destination
+	var living := get_living_soldiers()
+	if living.is_empty(): return destination
 	var total := Vector3.ZERO
-	for soldier in soldiers: total += soldier.global_position
-	return total / soldiers.size()
+	for soldier in living: total += soldier.global_position
+	return total / living.size()
 
-func get_row_count() -> int:
-	return ceili(float(soldier_count) / float(maxi(1, columns)))
+func get_row_count(slot_count: int = -1) -> int:
+	var count := soldier_count if slot_count < 0 else slot_count
+	return ceili(float(count) / float(maxi(1, columns)))
+
+func get_living_soldiers() -> Array[Soldier]:
+	var living: Array[Soldier] = []
+	for soldier in soldiers:
+		if soldier.is_alive:
+			living.append(soldier)
+	return living
+
+func get_alive_count() -> int:
+	return get_living_soldiers().size()
+
+func get_max_count() -> int:
+	return soldier_count
+
+func set_combat_state(new_state: int, target: Formation = null) -> void:
+	if combat_state == CombatState.DEFEATED:
+		return
+	if new_state == CombatState.ENGAGED:
+		# Engagement freezes the formation where it actually met its opponent.
+		# Without this, soldiers keep travelling toward a previous move order and
+		# can separate again before the next combat tick.
+		destination = get_current_center()
+		_apply_slots(destination, facing)
+	combat_state = new_state
+	combat_target = target
+	if combat_state == CombatState.ENGAGED:
+		clear_order_preview()
+
+func halt_movement() -> void:
+	if combat_state == CombatState.DEFEATED:
+		return
+	destination = get_current_center()
+	_apply_slots(destination, facing)
+	combat_state = CombatState.IDLE
+	combat_target = null
+
+func get_state_name() -> String:
+	match combat_state:
+		CombatState.IDLE: return "IDLE"
+		CombatState.MOVING: return "MOVING"
+		CombatState.ENGAGED: return "ENGAGED"
+		CombatState.DEFEATED: return "DEFEATED"
+	return "UNKNOWN"
+
+func receive_damage(amount: float, incoming_direction: String) -> void:
+	if combat_state == CombatState.DEFEATED:
+		return
+	current_health = maxf(0.0, current_health - amount)
+	receiving_direction = incoming_direction
+	var expected_alive := ceili(current_health / health_per_soldier)
+	var casualties := maxi(0, get_alive_count() - expected_alive)
+	for casualty_index in range(casualties):
+		var living := get_living_soldiers()
+		if living.is_empty():
+			break
+		living.back().die()
+	_apply_slots(destination, facing)
+	if get_alive_count() == 0:
+		combat_state = CombatState.DEFEATED
+		combat_target = null
 
 func _apply_slots(center: Vector3, direction: Vector3) -> void:
-	var slots := _calculate_slots(center, direction)
-	for index in range(mini(soldiers.size(), slots.size())):
-		soldiers[index].set_desired_slot(slots[index], direction)
+	var living := get_living_soldiers()
+	var slots := _calculate_slots(center, direction, living.size())
+	for index in range(mini(living.size(), slots.size())):
+		living[index].set_desired_slot(slots[index], direction)
 
-func _calculate_slots(center: Vector3, direction: Vector3) -> Array[Vector3]:
+func _calculate_slots(center: Vector3, direction: Vector3, slot_count: int = -1) -> Array[Vector3]:
 	var slots: Array[Vector3] = []
+	var count := soldier_count if slot_count < 0 else slot_count
 	var forward := _safe_facing(direction, Vector3.FORWARD)
 	var right := forward.cross(Vector3.UP).normalized()
-	var rows := get_row_count()
-	for index in range(soldier_count):
+	var rows := get_row_count(count)
+	for index in range(count):
 		var row := index / columns
 		var column := index % columns
-		var columns_in_row := mini(columns, soldier_count - row * columns)
+		var columns_in_row := mini(columns, count - row * columns)
 		var x := (float(column) - float(columns_in_row - 1) * 0.5) * spacing
 		var z := (float(row) - float(rows - 1) * 0.5) * spacing
 		slots.append(center + right * x - forward * z)
@@ -121,17 +208,20 @@ func _draw_current_center(color: Color) -> void:
 	_add_line(center + Vector3.FORWARD * 0.35, center + Vector3.BACK * 0.35, color)
 
 func _draw_formation_debug(center: Vector3, direction: Vector3, color: Color) -> void:
+	var alive_count := get_alive_count()
+	if alive_count == 0:
+		return
 	var forward := _safe_facing(direction, facing)
 	var right := forward.cross(Vector3.UP).normalized()
-	var half_width := (mini(columns, soldier_count) - 1) * spacing * 0.5 + 0.5
-	var half_depth := (get_row_count() - 1) * spacing * 0.5 + 0.5
+	var half_width := (mini(columns, alive_count) - 1) * spacing * 0.5 + 0.5
+	var half_depth := (get_row_count(alive_count) - 1) * spacing * 0.5 + 0.5
 	var a := to_local(center - right * half_width - forward * half_depth) + Vector3.UP * 0.03
 	var b := to_local(center + right * half_width - forward * half_depth) + Vector3.UP * 0.03
 	var c := to_local(center + right * half_width + forward * half_depth) + Vector3.UP * 0.03
 	var d := to_local(center - right * half_width + forward * half_depth) + Vector3.UP * 0.03
 	_add_line(a, b, color); _add_line(b, c, color); _add_line(c, d, color); _add_line(d, a, color)
 	_add_line(to_local(center) + Vector3.UP * 0.04, to_local(center + forward * (half_depth + 1.2)) + Vector3.UP * 0.04, color)
-	for slot in _calculate_slots(center, direction):
+	for slot in _calculate_slots(center, direction, alive_count):
 		var marker := to_local(slot) + Vector3.UP * 0.035
 		_add_line(marker + Vector3.LEFT * 0.09, marker + Vector3.RIGHT * 0.09, color)
 		_add_line(marker + Vector3.FORWARD * 0.09, marker + Vector3.BACK * 0.09, color)

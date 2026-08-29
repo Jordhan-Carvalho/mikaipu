@@ -1,6 +1,6 @@
 # Mikaipu
 
-Mikaipu is an experimental real-time strategy game. This repository currently contains only the first 3D battle proof of concept: selecting one formation, ordering it across a flat battlefield, and explicitly setting its facing.
+Mikaipu is an experimental real-time strategy game. This repository currently contains a 3D proof of concept for formation movement, explicit facing, and basic formation-level Spearmen combat.
 
 ## Run
 
@@ -24,14 +24,27 @@ Godot 4.7.2 is installed locally. Restart Codex so it reloads the MCP configurat
 - **Right click ground**: move the selected formation while retaining its facing.
 - **Right-click drag**: choose its destination (where the drag starts) and facing (from start toward release). A cyan preview appears before release.
 - **Escape**: cancel a pending right-click drag.
+- **F**: toggle enemy chase. The enemy chases by default; turn it stationary to set up flank and rear tests.
+- **R**: restart the battle scene.
+
+## Combat testing
+
+The player formation starts blue; the enemy Spearmen formation starts red and approaches automatically. Combat begins when the formations are close enough, then both stop and exchange formation-level damage every 0.5 seconds.
+
+- **Front**: let the two formations meet while facing each other. Casualties should be similar.
+- **Flank**: press **F**, move the player beside the stationary enemy, and face its side before engaging. The enemy receives 1.3× damage.
+- **Rear**: with the enemy stationary, move behind it and face toward its rear. The enemy receives 1.6× damage.
+
+Select the blue formation to view its alive count, combat state, and current incoming direction. `VICTORY` or `DEFEAT` ends combat when one formation reaches zero soldiers.
 
 ## Current architecture
 
-- `scenes/battle/battle_test.tscn` assembles the test arena, light, camera, input controller, and one formation.
+- `scenes/battle/battle_test.tscn` assembles the arena, camera, player/enemy formations, combat resolver, input controller, and HUD.
 - `scenes/formations/formation.tscn` and `scenes/units/soldier.tscn` are reusable scene roots; their scripts generate the placeholder visuals and formation members at runtime.
 - `scripts/camera/rts_camera.gd` provides the fixed-angle RTS camera.
-- `scripts/formations/formation.gd` owns formation state, rectangular slot calculation, orders, selection, and debug drawing.
-- `scripts/units/soldier.gd` makes each visible soldier move directly toward its assigned slot.
+- `scripts/formations/formation.gd` owns formation state, aggregate health, formation slots, orders, selection, and casualty reorganization.
+- `scripts/battle/combat_resolver.gd` owns simple enemy pursuit, engagement detection, directional classification, and periodic formation-level damage.
+- `scripts/units/soldier.gd` makes each visible soldier move directly toward its assigned slot and renders simple fallen casualties.
 - `scripts/input/formation_input.gd` raycasts the ground plane and translates mouse gestures into selection and movement orders.
 
-This milestone deliberately has no combat, AI, pathfinding, persistence, multiplayer, world map, Captain, buildings, or economy.
+This milestone deliberately has no unit-level combat AI, pathfinding, persistence, multiplayer, world map, Captain, buildings, archers, cavalry, or economy.
