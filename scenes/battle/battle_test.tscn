@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/battle_test.gd" id="1_battle"]
 [ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="2_camera"]
@@ -11,6 +11,7 @@
 [ext_resource type="Resource" path="res://resources/units/cavalry.tres" id="9_cavalry"]
 [ext_resource type="Resource" path="res://resources/units/archers.tres" id="10_archers"]
 [ext_resource type="Script" path="res://scripts/battle/arrow_volley_visuals.gd" id="11_arrows"]
+[ext_resource type="Script" path="res://scripts/units/warlord.gd" id="12_warlord"]
 
 [node name="BattleTest" type="Node3D"]
 script = ExtResource("1_battle")
@@ -51,6 +52,10 @@ initial_center = Vector3(5, 0, 20)
 initial_facing = Vector3(0, 0, -1)
 soldier_color = Color(0.28, 0.82, 0.38, 1)
 
+[node name="Warlord" type="Node3D" parent="."]
+position = Vector3(-3, 0, 16)
+script = ExtResource("12_warlord")
+
 [node name="EnemySpearmen" parent="." instance=ExtResource("3_formation")]
 unit_definition = ExtResource("8_spearmen")
 team_id = 1
@@ -72,6 +77,7 @@ script = ExtResource("4_input")
 camera_path = NodePath("../RTSCamera")
 player_formation_paths = [NodePath("../PlayerSpearmen"), NodePath("../PlayerCavalry"), NodePath("../PlayerArchers")]
 enemy_formation_paths = [NodePath("../EnemySpearmen"), NodePath("../EnemyCavalry")]
+warlord_path = NodePath("../Warlord")
 
 [node name="CombatResolver" type="Node" parent="."]
 script = ExtResource("5_combat")

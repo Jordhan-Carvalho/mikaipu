@@ -24,8 +24,11 @@ Godot 4.7.2 is installed locally. Restart Codex so it reloads the MCP configurat
 - **Right click ground**: move the selected formation while retaining its facing.
 - **Right-click drag**: choose its destination (where the drag starts) and facing (from start toward release). A cyan preview appears before release.
 - **Right-click enemy while Archers are selected**: assign that formation as the Archer ranged target.
+- **Right-click ground while Warlord is selected**: move the Warlord independently.
+- **Right-click enemy while Warlord is selected**: approach and attack that formation.
 - **Escape**: cancel a pending right-click drag.
 - **Q**: with Cavalry selected, charge the nearest enemy; with Spearmen selected, toggle Brace.
+- **Q with Warlord selected**: activate Battle Roar.
 - **E**: test-only trigger for the enemy Cavalry to charge the nearest player formation.
 - **F**: toggle enemy chase. The enemy chases by default; turn it stationary to set up flank and rear tests.
 - **G**: toggle local-melee debug lines for active soldiers and their formation slots.
@@ -57,4 +60,6 @@ During engagement, only nearby soldiers can temporarily leave their exact slots 
 
 Archers hold their position when a selected target is out of range. In range, they turn toward it and fire periodic visual volleys. They stop firing as soon as they enter melee, where they are deliberately weak. Spearmen and Cavalry retain their existing controls; Cavalry are especially dangerous when they reach exposed Archers.
 
-This milestone deliberately has no unit-level combat AI, pathfinding, persistence, multiplayer, world map, Captain, buildings, advanced line of sight, ammo, or economy.
+The Warlord is individually selectable and moves independently of formations. Keep him within 10m of allied formations for Command Aura (+10% damage). Battle Roar gives formations near him at activation +20% damage for 10 seconds, then has a 40-second cooldown. His death removes all buffs and displays `WARLORD FALLEN`, but the battle continues.
+
+This milestone deliberately has no unit-level combat AI, pathfinding, persistence, multiplayer, world map, equipment, buildings, advanced line of sight, ammo, or economy.

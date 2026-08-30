@@ -1,15 +1,19 @@
 extends Node
 
 signal ranged_attack_requested(attacker: Formation, target: Formation)
+signal warlord_attack_requested(warlord: Node, target: Formation)
 
 @export var camera_path: NodePath
 @export var player_formation_paths: Array[NodePath] = []
 @export var enemy_formation_paths: Array[NodePath] = []
+@export var warlord_path: NodePath
 @export var drag_threshold_pixels := 8.0
 @onready var _camera: Camera3D = get_node(camera_path)
 var _formations: Array[Formation] = []
 var _enemy_formations: Array[Formation] = []
 var _selected_formation: Formation
+var _warlord: Node
+var _selected_warlord: Node
 var _right_dragging := false
 var _drag_start_screen := Vector2.ZERO
 var _drag_start_world := Vector3.ZERO
@@ -19,9 +23,14 @@ func _ready() -> void:
 		_formations.append(get_node(formation_path) as Formation)
 	for formation_path in enemy_formation_paths:
 		_enemy_formations.append(get_node(formation_path) as Formation)
+	if not warlord_path.is_empty():
+		_warlord = get_node(warlord_path)
 
 func get_selected_formation() -> Formation:
 	return _selected_formation
+
+func get_selected_warlord() -> Node:
+	return _selected_warlord
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed:
@@ -35,9 +44,22 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 	if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_select_at(_ground_point(event.position))
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.pressed and _selected_warlord != null:
+			_handle_warlord_order(event.position)
+			return
 		if event.pressed and _try_request_ranged_attack(event.position): return
 		if event.pressed: _begin_drag(event.position)
 		else: _commit_drag(event.position)
+
+func _handle_warlord_order(screen_position: Vector2) -> void:
+	var point := _ground_point(screen_position)
+	if not point.is_finite():
+		return
+	for enemy in _enemy_formations:
+		if enemy.combat_state != Formation.CombatState.DEFEATED and enemy.contains_ground_point(point):
+			warlord_attack_requested.emit(_selected_warlord, enemy)
+			return
+	_selected_warlord.call("issue_move", point)
 
 func _try_request_ranged_attack(screen_position: Vector2) -> bool:
 	if _selected_formation == null or not _selected_formation.is_archer():
@@ -53,14 +75,21 @@ func _try_request_ranged_attack(screen_position: Vector2) -> bool:
 
 func _select_at(point: Vector3) -> void:
 	var selected: Formation
+	var selected_warlord: Node
 	if point.is_finite():
-		for formation in _formations:
-			if formation.combat_state != Formation.CombatState.DEFEATED and formation.contains_ground_point(point):
-				selected = formation
-				break
+		if _warlord != null and _warlord.call("contains_ground_point", point):
+			selected_warlord = _warlord
+		else:
+			for formation in _formations:
+				if formation.combat_state != Formation.CombatState.DEFEATED and formation.contains_ground_point(point):
+					selected = formation
+					break
 	for formation in _formations:
 		formation.set_selected(formation == selected)
 	_selected_formation = selected
+	if _warlord != null:
+		_warlord.call("set_selected", _warlord == selected_warlord)
+	_selected_warlord = selected_warlord
 
 func _begin_drag(screen_position: Vector2) -> void:
 	if _selected_formation == null: return

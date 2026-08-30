@@ -3,6 +3,7 @@ extends Node3D
 @onready var player_spearmen: Formation = $PlayerSpearmen
 @onready var player_cavalry: Formation = $PlayerCavalry
 @onready var player_archers: Formation = $PlayerArchers
+@onready var warlord: Node3D = $Warlord
 @onready var enemy_spearmen: Formation = $EnemySpearmen
 @onready var enemy_cavalry: Formation = $EnemyCavalry
 @onready var formation_input: Node = $FormationInput
@@ -21,11 +22,16 @@ func _ready() -> void:
 	$WorldEnvironment.environment = environment
 	_create_ground()
 	var all_formations: Array[Formation] = [player_spearmen, player_cavalry, player_archers, enemy_spearmen, enemy_cavalry]
-	combat_resolver.configure(all_formations, arrow_volley_visuals)
+	combat_resolver.configure(all_formations, arrow_volley_visuals, warlord)
+	warlord.call("configure_allied_formations", [player_spearmen, player_cavalry, player_archers])
 	combat_hud.configure(formation_input, combat_resolver)
 	formation_input.connect("ranged_attack_requested", _on_ranged_attack_requested)
+	formation_input.connect("warlord_attack_requested", _on_warlord_attack_requested)
 	combat_resolver.battle_finished.connect(combat_hud.show_result)
 	combat_resolver.damage_dealt.connect(combat_feedback.show_damage)
+	warlord.connect("formation_damage", _on_warlord_formation_damage)
+	warlord.connect("damage_received", _on_warlord_damage_received)
+	warlord.connect("warlord_died", _on_warlord_died)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
@@ -43,6 +49,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 func _use_selected_ability() -> void:
+	var selected_warlord: Node = formation_input.call("get_selected_warlord") as Node
+	if selected_warlord != null:
+		selected_warlord.call("activate_battle_roar")
+		return
 	var selected: Formation = formation_input.get_selected_formation()
 	if selected == null:
 		return
@@ -54,10 +64,23 @@ func _use_selected_ability() -> void:
 func _on_ranged_attack_requested(attacker: Formation, target: Formation) -> void:
 	attacker.set_ranged_target(target)
 
+func _on_warlord_attack_requested(selected_warlord: Node, target: Formation) -> void:
+	selected_warlord.call("set_attack_target", target)
+
+func _on_warlord_formation_damage(_target: Formation, amount: float, world_position: Vector3) -> void:
+	combat_feedback.show_damage(world_position, amount, "WARLORD", 1.0, "WARLORD")
+
+func _on_warlord_damage_received(amount: float, world_position: Vector3) -> void:
+	combat_feedback.show_damage(world_position, amount, "MELEE", 1.0, "WARLORD HIT")
+
+func _on_warlord_died() -> void:
+	combat_hud.show_warlord_fallen()
+
 func _toggle_debug() -> void:
 	var enabled := not player_spearmen.local_melee_debug_enabled
 	for formation in [player_spearmen, player_cavalry, player_archers, enemy_spearmen, enemy_cavalry]:
 		formation.set_local_melee_debug(enabled)
+	warlord.call("set_debug_enabled", enabled)
 
 func _create_ground() -> void:
 	var ground := MeshInstance3D.new()

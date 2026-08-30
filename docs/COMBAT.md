@@ -28,6 +28,19 @@ Archers use the existing Formation and aggregate-HP model. The player explicitly
 
 These range, damage, projectile, and matchup values are PoC tuning only. There is no accuracy, terrain cover, line of sight, ammunition, or individual projectile damage authority yet.
 
+## Milestone 5: Warlord
+
+The Warlord is a directly controlled individual unit, not a formation. He has 1000 individual HP, moves at 8 units/s, and attacks enemy formations in melee for 30 aggregate damage every second. He can follow a selected formation target within a 28m leash. His direct attacks use the target formation's normal aggregate HP and casualty representation.
+
+Enemy formations damage the Warlord only through their soldiers physically within melee range of him; a whole formation does not automatically apply its full damage just because he contacts one edge.
+
+- Command Aura: while the alive Warlord is within 10m of a player formation, that formation gains +10% outgoing damage.
+- Battle Roar: `Q` while selected; formations within 10m when cast gain +20% outgoing damage for 10 seconds. This is an activation snapshot, does not stack, and has a 40-second cooldown.
+- Formation outgoing damage is multiplied by applicable Command Aura and Battle Roar modifiers for normal melee, Cavalry charge/counter damage, and Archer volleys.
+- Warlord death disables his movement, attacks, ability, Aura, and active Battle Roar recipients. The Warlord remains visibly fallen and the battle continues normally; Warlord death never determines victory.
+
+Enemy Archers do not target the Warlord in this PoC. Warlord progression, equipment, mana, respawn, and enemy Warlords are not implemented.
+
 ## Milestone 2 baseline
 
 Milestone 2 introduced 30-soldier Spearmen formations and formation-level combat every 0.5 seconds, not independent soldier targeting. Milestone 3 retains this baseline for normal melee and extends it with Cavalry charge and Spearmen Brace.
@@ -53,7 +66,7 @@ The enemy uses deterministic direct pursuit and faces the player until engagemen
 
 ## Camera and control
 
-Battles use an Age of Empires / Warcraft III-style RTS camera. The player commands formations and, in a later milestone, a Captain; soldiers are visible members of those formations rather than independently commanded tactical actors.
+Battles use an Age of Empires / Warcraft III-style RTS camera. The player commands formations and an individually controlled Warlord; soldiers are visible members of formations rather than independently commanded tactical actors.
 
 ## Scale and formations
 
@@ -63,9 +76,9 @@ Facing is chosen explicitly by the player. Future combat distinguishes front, fl
 
 ## Planned content
 
-Initial unit types are Spearmen, Archers, Cavalry, and Captain. Planned defensive structures are a Central Structure, Tower, and Barricade.
+Initial unit types are Spearmen, Archers, Cavalry, and Warlord. Planned defensive structures are a Central Structure, Tower, and Barricade.
 
-The Captain will fight directly, have equipment and abilities, and buff nearby troops. A possible ability is Battle Roar. Captain death does not automatically end a battle.
+The Warlord fights directly, has Command Aura and Battle Roar, and buffs nearby troops. Warlord death does not automatically end a battle.
 
 The attacker wins by destroying the Central Structure. The defender wins by surviving 20 minutes or defeating the attacking army.
 

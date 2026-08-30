@@ -30,12 +30,19 @@ func configure(input_controller: Node, resolver: CombatResolver) -> void:
 func show_result(result: String) -> void:
 	_result_label.text = result
 
+func show_warlord_fallen() -> void:
+	_result_label.text = "WARLORD FALLEN\nTHE BATTLE CONTINUES"
+
 func _process(_delta: float) -> void:
 	if formation_input == null or combat_resolver == null:
 		return
+	var selected_warlord: Node = formation_input.call("get_selected_warlord") as Node
+	if selected_warlord != null:
+		_status_label.text = "WARLORD\nHP: %d / %d\nState: %s\nCommand Aura: %s\nBattle Roar: %s\nQ: Battle Roar\nF enemy chase: %s\nG debug, R restart." % [roundi(float(selected_warlord.get("current_health"))), roundi(float(selected_warlord.get("max_health"))), selected_warlord.call("get_state_name"), selected_warlord.call("get_command_aura_status"), selected_warlord.call("get_battle_roar_status"), "ON" if combat_resolver.enemy_chase_enabled else "STATIONARY"]
+		return
 	var selected: Formation = formation_input.call("get_selected_formation") as Formation
 	if selected == null:
-		_status_label.text = "Left click a player formation to select it.\nArcher: right-click enemy to fire.\nF enemy chase: %s\nQ: Cavalry charge / Spearmen Brace\nE: test enemy Cavalry charge\nG debug, R restart." % ("ON" if combat_resolver.enemy_chase_enabled else "STATIONARY")
+		_status_label.text = "Left click a player formation or Warlord to select it.\nArcher: right-click enemy to fire.\nWarlord: right-click ground/enemy to move/attack.\nF enemy chase: %s\nQ: Cavalry charge / Spearmen Brace / Battle Roar\nE: test enemy Cavalry charge\nG debug, R restart." % ("ON" if combat_resolver.enemy_chase_enabled else "STATIONARY")
 		return
 	var ability_text := "Charge nearest enemy" if selected.is_cavalry() else "Toggle Brace" if selected.is_spearmen() else "None"
 	var ranged_text := ""

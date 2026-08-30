@@ -50,6 +50,8 @@ var _charge_start_center := Vector3.ZERO
 var _last_charge_target: Formation
 var ranged_target: Formation
 var ranged_volley_cooldown := 0.0
+var command_aura_multiplier := 1.0
+var battle_roar_multiplier := 1.0
 
 func _ready() -> void:
 	_apply_unit_definition()
@@ -174,6 +176,15 @@ func is_archer() -> bool:
 
 func get_melee_attack_per_second() -> float:
 	return unit_definition.melee_attack_per_second if unit_definition != null else 5.0
+
+func set_command_aura_multiplier(value: float) -> void:
+	command_aura_multiplier = maxf(1.0, value)
+
+func set_battle_roar_multiplier(value: float) -> void:
+	battle_roar_multiplier = maxf(1.0, value)
+
+func get_outgoing_damage_multiplier() -> float:
+	return command_aura_multiplier * battle_roar_multiplier
 
 func set_ranged_target(target: Formation) -> bool:
 	if not is_archer() or target == null or target.team_id == team_id or target.combat_state == CombatState.DEFEATED:
