@@ -29,13 +29,13 @@ Godot 4.7.2 is installed locally. Restart Codex so it reloads the MCP configurat
 
 ## Combat testing
 
-The player formation starts blue; the enemy Spearmen formation starts red and approaches automatically. Combat begins when the formations are close enough, then both stop and exchange formation-level damage every 0.5 seconds.
+The player formation starts blue; the enemy Spearmen formation starts red and approaches automatically. Combat begins when the formations are close enough and they exchange formation-level damage every 0.5 seconds. Only living soldiers within their formation's 1.75-unit melee range of an enemy contribute damage. If late-battle survivors are too far apart to fight, the chase-enabled enemy closes the remaining gap until contact is restored. Movement and facing orders remain available during engagement; moving outside combat range disengages the formations and stops damage.
 
 - **Front**: let the two formations meet while facing each other. Casualties should be similar.
 - **Flank**: press **F**, move the player beside the stationary enemy, and face its side before engaging. The enemy receives 1.3× damage.
 - **Rear**: with the enemy stationary, move behind it and face toward its rear. The enemy receives 1.6× damage.
 
-Select the blue formation to view its alive count, combat state, and current incoming direction. `VICTORY` or `DEFEAT` ends combat when one formation reaches zero soldiers.
+Each formation shows a world-space health bar and survivor count. Floating damage numbers appear at the contact line; debug builds include their directional modifier. Select the blue formation to view its alive count, combat state, and current incoming direction. Casualties fall on the side nearest the attacking formation, then survivors close the gap. `VICTORY` or `DEFEAT` ends combat when one formation reaches zero soldiers.
 
 ## Current architecture
 

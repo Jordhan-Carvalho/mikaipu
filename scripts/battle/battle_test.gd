@@ -4,6 +4,7 @@ extends Node3D
 @onready var enemy_formation: Formation = $EnemyFormation
 @onready var combat_resolver: Node = $CombatResolver
 @onready var combat_hud: CanvasLayer = $CombatHud
+@onready var combat_feedback: Node3D = $CombatFeedback
 
 func _ready() -> void:
 	var environment := Environment.new()
@@ -27,6 +28,7 @@ func _ready() -> void:
 	combat_resolver.call("configure", player_formation, enemy_formation)
 	combat_hud.call("configure", player_formation, combat_resolver)
 	combat_resolver.connect("battle_finished", Callable(combat_hud, "show_result"))
+	combat_resolver.connect("damage_dealt", Callable(combat_feedback, "show_damage"))
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:

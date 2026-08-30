@@ -15,9 +15,13 @@ Temporary PoC values:
 - Rear attack: 1.6× damage
 - Front/rear sectors: 60° from the defender's forward/back direction
 
-Damage reduces aggregate formation HP. Each completed 100-HP loss removes one visible soldier; partial damage carries toward the next casualty. Fallen soldiers stop moving, while surviving soldiers recalculate their normal formation slots and close gaps. These values are PoC tuning only and are not final balance.
+Damage reduces aggregate formation HP. Each completed 100-HP loss removes one visible soldier; partial damage carries toward the next casualty. The visual casualty is chosen from the living soldiers nearest the attacking formation, so losses appear on the actual contact side. Fallen soldiers stop moving, while surviving soldiers recalculate their normal formation slots and close gaps. These values are PoC tuning only and are not final balance.
 
-The enemy uses deterministic direct pursuit and faces the player until engagement. `F` toggles it stationary for controlled flank/rear tests. Engaged formations stop receiving movement orders. A battle ends at zero living soldiers, showing Victory or Defeat and stopping combat ticks.
+Melee damage uses only active combatants. A living soldier is active when at least one living opponent is within that formation's configurable melee range; Spearmen currently use 1.75 units. The formation can remain engaged with zero active melee combatants, in which case it deals no damage until soldiers make contact. When enemy chase is enabled, the enemy continues closing this gap until at least one of its soldiers reaches melee range, which prevents shallow late-battle formations from stalling. This is still aggregate formation combat, not individual combat AI.
+
+Each formation has an always-visible world-space health bar and surviving-soldier count. Every non-zero formation damage tick creates one floating damage number near the receiving contact line. Debug builds append the incoming direction and temporary modifier.
+
+The enemy uses deterministic direct pursuit and faces the player until engagement. `F` toggles it stationary for controlled flank/rear tests. The player can continue issuing movement and facing orders while engaged. Combat stops and both formations disengage once their centers move outside engagement range. A battle ends at zero living soldiers, showing Victory or Defeat and stopping combat ticks.
 
 ## Camera and control
 

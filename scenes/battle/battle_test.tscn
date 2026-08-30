@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/battle_test.gd" id="1_battle"]
 [ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="2_camera"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scripts/input/formation_input.gd" id="4_input"]
 [ext_resource type="Script" path="res://scripts/battle/combat_resolver.gd" id="5_combat"]
 [ext_resource type="Script" path="res://scripts/battle/combat_hud.gd" id="6_hud"]
+[ext_resource type="Script" path="res://scripts/battle/combat_feedback.gd" id="7_feedback"]
 
 [node name="BattleTest" type="Node3D"]
 script = ExtResource("1_battle")
@@ -41,3 +42,6 @@ script = ExtResource("5_combat")
 
 [node name="CombatHud" type="CanvasLayer" parent="."]
 script = ExtResource("6_hud")
+
+[node name="CombatFeedback" type="Node3D" parent="."]
+script = ExtResource("7_feedback")

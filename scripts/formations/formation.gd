@@ -2,6 +2,7 @@ class_name Formation
 extends Node3D
 
 const SOLDIER_SCENE := preload("res://scenes/units/soldier.tscn")
+const FORMATION_STATUS_DISPLAY_SCRIPT := preload("res://scripts/battle/formation_status_display.gd")
 enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
 
 @export var soldier_count := 30
@@ -13,6 +14,7 @@ enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
 @export var initial_facing := Vector3(0.0, 0.0, -1.0)
 @export var soldier_color := Color("#d5bc70")
 @export var health_per_soldier := 100.0
+@export var melee_range := 1.75
 
 var soldiers: Array[Soldier] = []
 var destination := Vector3(0.0, 0.0, 3.0)
@@ -44,6 +46,7 @@ func _ready() -> void:
 		soldier.set_placeholder_color(soldier_color)
 		soldier.set_desired_slot(slot, facing)
 		soldiers.append(soldier)
+	_create_status_display()
 	_rebuild_debug_mesh()
 
 func _process(_delta: float) -> void:
@@ -51,7 +54,7 @@ func _process(_delta: float) -> void:
 		_rebuild_debug_mesh()
 
 func issue_order(new_destination: Vector3, new_facing: Vector3) -> void:
-	if combat_state == CombatState.ENGAGED or combat_state == CombatState.DEFEATED:
+	if combat_state == CombatState.DEFEATED:
 		return
 	destination = _flat(new_destination)
 	facing = _safe_facing(new_facing, facing)
@@ -109,19 +112,26 @@ func get_alive_count() -> int:
 func get_max_count() -> int:
 	return soldier_count
 
+func get_health_ratio() -> float:
+	if max_health <= 0.0:
+		return 0.0
+	return current_health / max_health
+
 func set_combat_state(new_state: int, target: Formation = null) -> void:
 	if combat_state == CombatState.DEFEATED:
 		return
-	if new_state == CombatState.ENGAGED:
-		# Engagement freezes the formation where it actually met its opponent.
-		# Without this, soldiers keep travelling toward a previous move order and
-		# can separate again before the next combat tick.
-		destination = get_current_center()
-		_apply_slots(destination, facing)
 	combat_state = new_state
 	combat_target = target
 	if combat_state == CombatState.ENGAGED:
 		clear_order_preview()
+
+func disengage() -> void:
+	if combat_state == CombatState.DEFEATED:
+		return
+	combat_target = null
+	receiving_direction = "NONE"
+	var still_moving := get_current_center().distance_squared_to(destination) > 0.01
+	combat_state = CombatState.MOVING if still_moving else CombatState.IDLE
 
 func halt_movement() -> void:
 	if combat_state == CombatState.DEFEATED:
@@ -139,10 +149,14 @@ func get_state_name() -> String:
 		CombatState.DEFEATED: return "DEFEATED"
 	return "UNKNOWN"
 
-func receive_damage(amount: float, incoming_direction: String) -> void:
+func receive_damage(amount: float, incoming_direction: String, attacker_position: Vector3) -> float:
 	if combat_state == CombatState.DEFEATED:
-		return
+		return 0.0
+	var previous_health := current_health
 	current_health = maxf(0.0, current_health - amount)
+	var applied_damage := previous_health - current_health
+	if applied_damage <= 0.0:
+		return 0.0
 	receiving_direction = incoming_direction
 	var expected_alive := ceili(current_health / health_per_soldier)
 	var casualties := maxi(0, get_alive_count() - expected_alive)
@@ -150,11 +164,23 @@ func receive_damage(amount: float, incoming_direction: String) -> void:
 		var living := get_living_soldiers()
 		if living.is_empty():
 			break
-		living.back().die()
+		var casualty := _find_closest_soldier(living, attacker_position)
+		casualty.die()
 	_apply_slots(destination, facing)
 	if get_alive_count() == 0:
 		combat_state = CombatState.DEFEATED
 		combat_target = null
+	return applied_damage
+
+func _find_closest_soldier(living: Array[Soldier], world_position: Vector3) -> Soldier:
+	var closest: Soldier = living.front() as Soldier
+	var closest_distance: float = closest.global_position.distance_squared_to(world_position)
+	for soldier in living:
+		var distance := soldier.global_position.distance_squared_to(world_position)
+		if distance < closest_distance:
+			closest = soldier
+			closest_distance = distance
+	return closest
 
 func _apply_slots(center: Vector3, direction: Vector3) -> void:
 	var living := get_living_soldiers()
@@ -188,6 +214,11 @@ func _create_debug_mesh() -> void:
 	_debug_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_debug_instance.material_override = _debug_material
 	add_child(_debug_instance)
+
+func _create_status_display() -> void:
+	var display: Node3D = FORMATION_STATUS_DISPLAY_SCRIPT.new() as Node3D
+	display.call("configure", self)
+	add_child(display)
 
 func _rebuild_debug_mesh() -> void:
 	if _debug_mesh == null:
