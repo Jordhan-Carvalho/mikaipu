@@ -1,13 +1,12 @@
 class_name Warlord
-extends Node3D
+extends DamageableTarget
 
-signal formation_damage(target: Formation, amount: float, world_position: Vector3)
+signal target_damage(target: Node, amount: float, world_position: Vector3)
 signal damage_received(amount: float, world_position: Vector3)
 signal warlord_died
 
 enum State { IDLE, MOVING, ATTACKING, DEAD }
 
-@export var team_id := 0
 @export var max_health := 1000.0
 @export var movement_speed := 8.0
 @export var attack_damage := 30.0
@@ -20,17 +19,24 @@ enum State { IDLE, MOVING, ATTACKING, DEAD }
 @export var battle_roar_damage_multiplier := 1.2
 @export var battle_roar_duration := 10.0
 @export var battle_roar_cooldown := 40.0
+@export var barricade_padding := 0.55
+@export var auto_attack_radius := 8.0
+
+const TARGETING_COLLISION_LAYER := 1 << 6
 
 var current_health := 1000.0
 var selected := false
 var state := State.IDLE
 var destination := Vector3.ZERO
-var attack_target: Formation
+var attack_target: Node
+var explicit_attack_target: Node
+var auto_attack_target: Node
 var _attack_cooldown_remaining := 0.0
 var _battle_roar_remaining := 0.0
 var _battle_roar_cooldown_remaining := 0.0
 var _allied_formations: Array[Formation] = []
 var _roar_recipients: Array[Formation] = []
+var _movement_blockers: Array[Structure] = []
 var _body: MeshInstance3D
 var _body_material: StandardMaterial3D
 var _selection_marker: MeshInstance3D
@@ -39,12 +45,18 @@ var _status_label: Label3D
 var _debug_mesh: ImmediateMesh
 var _debug_instance: MeshInstance3D
 var debug_enabled := false
+var battle_active := true
+var auto_attack_enabled := false
+var auto_attack_suppression_remaining := 0.0
+var command_name := "NONE"
+var _interaction_area: Area3D
 
 func _ready() -> void:
 	current_health = max_health
 	destination = global_position
 	_create_visuals()
 	_create_status_display()
+	_create_interaction_hitbox()
 	_create_debug_mesh()
 	_refresh_visuals()
 
@@ -56,6 +68,9 @@ func configure_allied_formations(formations: Array) -> void:
 func _process(delta: float) -> void:
 	_attack_cooldown_remaining = maxf(0.0, _attack_cooldown_remaining - delta)
 	_battle_roar_cooldown_remaining = maxf(0.0, _battle_roar_cooldown_remaining - delta)
+	auto_attack_suppression_remaining = maxf(0.0, auto_attack_suppression_remaining - delta)
+	if command_name == "STOP" and auto_attack_suppression_remaining <= 0.0:
+		command_name = "NONE"
 	if state == State.DEAD:
 		return
 	_update_command_aura()
@@ -70,7 +85,10 @@ func _physics_process(delta: float) -> void:
 	_update_attack_target()
 	var target_position := destination
 	if state == State.ATTACKING and attack_target != null:
-		target_position = attack_target.get_current_center()
+		if attack_target is Structure:
+			target_position = attack_target.get_attack_position(global_position, attack_range)
+		else:
+			target_position = attack_target.call("get_target_position")
 	var flat_offset := _flat(target_position - global_position)
 	if state == State.ATTACKING and attack_target != null and flat_offset.length() <= attack_range:
 		_face_direction(flat_offset)
@@ -82,7 +100,8 @@ func _physics_process(delta: float) -> void:
 			state = State.IDLE
 		return
 	var move_distance := minf(movement_speed * delta, flat_offset.length())
-	global_position += flat_offset.normalized() * move_distance
+	var requested_position := global_position + flat_offset.normalized() * move_distance
+	global_position = _clamp_to_barricade(global_position, requested_position)
 	_face_direction(flat_offset)
 
 func set_selected(value: bool) -> void:
@@ -94,18 +113,61 @@ func contains_ground_point(point: Vector3) -> bool:
 	return state != State.DEAD and _flat(point - global_position).length_squared() <= 1.1 * 1.1
 
 func issue_move(world_position: Vector3) -> void:
+	if state == State.DEAD or not battle_active:
+		return
+	attack_target = null
+	explicit_attack_target = null
+	auto_attack_target = null
+	destination = _flat(world_position)
+	state = State.MOVING
+	command_name = "MOVE"
+
+func set_movement_blockers(blockers: Array) -> void:
+	_movement_blockers.clear()
+	for blocker in blockers:
+		if blocker is Structure:
+			_movement_blockers.append(blocker)
+
+func set_attack_target(target: Node) -> bool:
+	if state == State.DEAD or not battle_active or target == null or int(target.get("team_id")) == team_id or not target.call("is_target_alive"):
+		return false
+	attack_target = target
+	explicit_attack_target = target
+	auto_attack_target = null
+	state = State.ATTACKING
+	command_name = "ATTACK"
+	return true
+
+func set_auto_attack_target(target: Node) -> bool:
+	if not can_auto_attack() or target == null or not is_instance_valid(target) or not target.has_method("is_target_alive") or not target.call("is_target_alive") or int(target.get("team_id")) == team_id:
+		return false
+	attack_target = target
+	auto_attack_target = target
+	command_name = "NONE"
+	state = State.ATTACKING
+	return true
+
+func can_auto_attack() -> bool:
+	return auto_attack_enabled and auto_attack_suppression_remaining <= 0.0 and command_name == "NONE" and state == State.IDLE
+
+func stop() -> void:
 	if state == State.DEAD:
 		return
 	attack_target = null
-	destination = _flat(world_position)
-	state = State.MOVING
+	explicit_attack_target = null
+	auto_attack_target = null
+	destination = global_position
+	state = State.IDLE
+	command_name = "STOP"
+	auto_attack_suppression_remaining = 0.6
 
-func set_attack_target(target: Formation) -> bool:
-	if state == State.DEAD or target == null or target.team_id == team_id or target.combat_state == Formation.CombatState.DEFEATED:
-		return false
-	attack_target = target
-	state = State.ATTACKING
-	return true
+func get_command_name() -> String:
+	return command_name
+
+func get_explicit_attack_target() -> Node:
+	if explicit_attack_target == null or not is_instance_valid(explicit_attack_target) or not explicit_attack_target.has_method("is_target_alive") or not explicit_attack_target.call("is_target_alive"):
+		return null
+	return explicit_attack_target
 
 func receive_damage(amount: float, world_position: Vector3) -> float:
 	if state == State.DEAD:
@@ -118,8 +180,29 @@ func receive_damage(amount: float, world_position: Vector3) -> float:
 		_die()
 	return applied
 
+func is_target_alive() -> bool:
+	return is_alive()
+
+func get_target_position() -> Vector3:
+	return global_position
+
+func get_targeting_center() -> Vector3:
+	return global_position + Vector3.UP
+
+func get_targeting_radius() -> float:
+	return 1.6
+
+func get_impact_points(count: int) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	for index in range(maxi(1, count)):
+		points.append(global_position + Vector3(randf_range(-0.45, 0.45), 0.9, randf_range(-0.45, 0.45)))
+	return points
+
+func receive_target_damage(amount: float, source_position: Vector3, _damage_kind := "DIRECT") -> float:
+	return receive_damage(amount, source_position)
+
 func activate_battle_roar() -> bool:
-	if state == State.DEAD or _battle_roar_remaining > 0.0 or _battle_roar_cooldown_remaining > 0.0:
+	if state == State.DEAD or not battle_active or _battle_roar_remaining > 0.0 or _battle_roar_cooldown_remaining > 0.0:
 		return false
 	_roar_recipients.clear()
 	for formation in _allied_formations:
@@ -160,20 +243,49 @@ func set_debug_enabled(value: bool) -> void:
 	debug_enabled = value
 	_rebuild_debug_mesh()
 
+func set_battle_active(value: bool) -> void:
+	battle_active = value
+	if not battle_active and state != State.DEAD:
+		attack_target = null
+		explicit_attack_target = null
+		auto_attack_target = null
+		state = State.IDLE
+
 func _update_attack_target() -> void:
 	if attack_target == null:
 		return
-	if not is_instance_valid(attack_target) or attack_target.combat_state == Formation.CombatState.DEFEATED or global_position.distance_to(attack_target.get_current_center()) > attack_follow_leash:
+	if not is_instance_valid(attack_target) or not attack_target.call("is_target_alive") or global_position.distance_to(attack_target.call("get_target_position")) > attack_follow_leash:
+		var was_explicit := attack_target == explicit_attack_target
 		attack_target = null
+		explicit_attack_target = null if was_explicit else explicit_attack_target
+		auto_attack_target = null if not was_explicit else auto_attack_target
 		state = State.IDLE
+		if was_explicit and command_name == "ATTACK":
+			command_name = "NONE"
+
+func _clamp_to_barricade(from: Vector3, requested: Vector3) -> Vector3:
+	var nearest_point := requested
+	var nearest_distance := INF
+	for blocker in _movement_blockers:
+		if not is_instance_valid(blocker) or not blocker.is_target_alive():
+			continue
+		var hit := blocker.blocks_segment(from, requested, barricade_padding)
+		if hit.is_empty():
+			continue
+		var point: Vector3 = hit.get("point", requested) as Vector3
+		var distance := from.distance_squared_to(point)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_point = point
+	return nearest_point
 
 func _try_attack() -> void:
 	if _attack_cooldown_remaining > 0.0 or attack_target == null:
 		return
 	_attack_cooldown_remaining = attack_cooldown_seconds
-	var applied := attack_target.receive_damage(attack_damage, "WARLORD", global_position)
+	var applied: float = attack_target.call("receive_target_damage", attack_damage, global_position, "WARLORD")
 	if applied > 0.0:
-		formation_damage.emit(attack_target, applied, attack_target.get_current_center())
+		target_damage.emit(attack_target, applied, attack_target.call("get_target_position"))
 
 func _update_command_aura() -> void:
 	for formation in _allied_formations:
@@ -196,6 +308,8 @@ func _clear_battle_roar() -> void:
 func _die() -> void:
 	state = State.DEAD
 	attack_target = null
+	explicit_attack_target = null
+	auto_attack_target = null
 	_clear_battle_roar()
 	for formation in _allied_formations:
 		if is_instance_valid(formation):
@@ -247,6 +361,22 @@ func _create_status_display() -> void:
 	bar_back.position.y = 2.38
 	_health_fill = _create_bar(Color("#e5bd55"), 1)
 	_health_fill.position.y = 2.38
+
+func _create_interaction_hitbox() -> void:
+	_interaction_area = Area3D.new()
+	_interaction_area.name = "TargetingHitbox"
+	_interaction_area.collision_layer = TARGETING_COLLISION_LAYER
+	_interaction_area.collision_mask = 0
+	_interaction_area.monitoring = false
+	_interaction_area.monitorable = true
+	_interaction_area.set_meta("attackable_target", self)
+	var collision := CollisionShape3D.new()
+	var shape := SphereShape3D.new()
+	shape.radius = get_targeting_radius()
+	collision.shape = shape
+	collision.position = Vector3.UP
+	_interaction_area.add_child(collision)
+	add_child(_interaction_area)
 
 func _create_bar(color: Color, priority: int) -> MeshInstance3D:
 	var bar := MeshInstance3D.new()

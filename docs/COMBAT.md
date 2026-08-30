@@ -1,6 +1,25 @@
 # Combat design (agreed direction)
 
-This document records the intended combat design and the current Milestone 3 proof of concept.
+This document records the intended combat design and the current Milestone 6 proof of concept.
+
+## Milestone 6: objective battle and defenses
+
+The player is the Attacker and the enemy is the Defender. The Attacker wins immediately by destroying the Defender Central Keep; the Defender wins if it survives until the timer expires or if every Attacker formation and the Warlord have been destroyed. Warlord death alone never ends the battle.
+
+- The design timer is 20 minutes. The battle test scene uses a configurable 3-minute PoC timer.
+- Central Keep: 9000 HP. It is the primary target and has no attacks.
+- Two Defensive Towers: 2500 HP each, 24m range, 55 damage every 1.2 seconds, nearest-attacker targeting.
+- Three Barricades: 1800 HP each. They stop direct formation movement and must be attacked or manually bypassed. Destroyed barricades stop blocking.
+- Spearmen, Cavalry, and Warlord attack structures in melee. Archers use their existing ranged volleys with a temporary 50% structure-damage multiplier.
+- Cavalry cannot pass through intact Barricades. A valid charge terminates at the barrier and deals a temporary 260 impact damage instead of anti-unit charge damage.
+
+Structures use individual aggregate HP, world-space health bars, and floating damage feedback; they have no soldier casualty model or directional damage modifiers. Towers select targets with simple nearest-in-range logic. These values are intentional PoC tuning, not final balance.
+
+## Battle Scenario 01: Fortified Keep Assault
+
+Scenario 01 uses equal forces: each side has two 30-soldier Spearmen formations, two 20-soldier Archer formations, one 20-soldier Cavalry formation, and a Warlord (120 soldiers per side). Six contiguous barricades block the direct route; Defender Spearmen form a line 7m behind, Archers stand behind them, Towers sit near the rear, and the Central Keep is last.
+
+The default scenario timer is 15 minutes, with the existing 3-minute test timer retained through BattleManager configuration and the 20-minute design value retained for later balance work. Defender Spearmen and Cavalry use simple anchor/radius response behavior; Defender Archers remain stationary and fire when an Attacker enters range. The Defender Warlord remains near the Keep and supplies Command Aura without autonomous attacks.
 
 ## Milestone 3: Cavalry Charge and Spearmen Brace
 
@@ -62,7 +81,7 @@ Each formation has an always-visible world-space health bar and surviving-soldie
 
 During formation engagement, soldiers enter a visual-only local melee mode as opponents come within the configured 6.5-unit local acquisition radius. They remain tethered within 5 units of their assigned slots, so rear and edge soldiers can feed into combat without becoming independent battlefield units. Up to six friendly soldiers may visually engage each nearby opponent; this deliberately lets full formations continue showing activity against a reduced enemy line. An advancing enemy formation now keeps closing until all living soldiers in both paired formations are within melee range, rather than stopping at first contact. Soldier attack motion does not calculate damage; CombatResolver continues to count only living soldiers physically within melee range as active combatants. `G` toggles local-melee target and slot debug lines.
 
-The enemy uses deterministic direct pursuit and faces the player until engagement. `F` toggles it stationary for controlled flank/rear tests. The player can continue issuing movement and facing orders while engaged. Combat stops and both formations disengage once their centers move outside engagement range. A battle ends at zero living soldiers, showing Victory or Defeat and stopping combat ticks.
+The enemy uses deterministic direct pursuit and faces the player until engagement. `F` toggles it stationary for controlled flank/rear tests. The player can continue issuing movement and facing orders while engaged. Combat stops and both formations disengage once their centers move outside engagement range. BattleManager, rather than formation elimination alone, now owns the final battle result.
 
 ## Camera and control
 
@@ -76,7 +95,7 @@ Facing is chosen explicitly by the player. Future combat distinguishes front, fl
 
 ## Planned content
 
-Initial unit types are Spearmen, Archers, Cavalry, and Warlord. Planned defensive structures are a Central Structure, Tower, and Barricade.
+Initial unit types are Spearmen, Archers, Cavalry, and Warlord. Current defensive structures are a Central Keep, Tower, and Barricade.
 
 The Warlord fights directly, has Command Aura and Battle Roar, and buffs nearby troops. Warlord death does not automatically end a battle.
 

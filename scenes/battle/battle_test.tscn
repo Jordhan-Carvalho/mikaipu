@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/battle_test.gd" id="1_battle"]
 [ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="2_camera"]
@@ -12,6 +12,11 @@
 [ext_resource type="Resource" path="res://resources/units/archers.tres" id="10_archers"]
 [ext_resource type="Script" path="res://scripts/battle/arrow_volley_visuals.gd" id="11_arrows"]
 [ext_resource type="Script" path="res://scripts/units/warlord.gd" id="12_warlord"]
+[ext_resource type="Script" path="res://scripts/battle/battle_manager.gd" id="13_manager"]
+[ext_resource type="Script" path="res://scripts/structures/central_structure.gd" id="14_keep"]
+[ext_resource type="Script" path="res://scripts/structures/defensive_tower.gd" id="15_tower"]
+[ext_resource type="Script" path="res://scripts/structures/barricade.gd" id="16_barricade"]
+[ext_resource type="Script" path="res://scripts/input/selection_box_overlay.gd" id="17_selection_overlay"]
 
 [node name="BattleTest" type="Node3D"]
 script = ExtResource("1_battle")
@@ -30,7 +35,7 @@ script = ExtResource("2_camera")
 [node name="PlayerSpearmen" parent="." instance=ExtResource("3_formation")]
 unit_definition = ExtResource("8_spearmen")
 team_id = 0
-initial_center = Vector3(-8, 0, 10)
+initial_center = Vector3(-9, 0, 27)
 initial_facing = Vector3(0, 0, -1)
 soldier_color = Color(0.32, 0.65, 0.95, 1)
 
@@ -39,7 +44,8 @@ unit_definition = ExtResource("9_cavalry")
 team_id = 0
 soldier_count = 18
 columns = 6
-initial_center = Vector3(8, 0, 12)
+initial_center = Vector3(0, 0, 34)
+soldier_count = 20
 initial_facing = Vector3(0, 0, -1)
 soldier_color = Color(0.12, 0.27, 0.58, 1)
 
@@ -48,35 +54,169 @@ unit_definition = ExtResource("10_archers")
 team_id = 0
 soldier_count = 24
 columns = 8
-initial_center = Vector3(5, 0, 20)
+initial_center = Vector3(-8, 0, 34)
+soldier_count = 20
 initial_facing = Vector3(0, 0, -1)
 soldier_color = Color(0.28, 0.82, 0.38, 1)
 
 [node name="Warlord" type="Node3D" parent="."]
-position = Vector3(-3, 0, 16)
+position = Vector3(2, 0, 37)
 script = ExtResource("12_warlord")
+
+[node name="PlayerSpearmenTwo" parent="." instance=ExtResource("3_formation")]
+unit_definition = ExtResource("8_spearmen")
+team_id = 0
+initial_center = Vector3(9, 0, 27)
+initial_facing = Vector3(0, 0, -1)
+soldier_color = Color(0.32, 0.65, 0.95, 1)
+
+[node name="PlayerArchersTwo" parent="." instance=ExtResource("3_formation")]
+unit_definition = ExtResource("10_archers")
+team_id = 0
+soldier_count = 20
+columns = 8
+initial_center = Vector3(8, 0, 34)
+initial_facing = Vector3(0, 0, -1)
+soldier_color = Color(0.28, 0.82, 0.38, 1)
 
 [node name="EnemySpearmen" parent="." instance=ExtResource("3_formation")]
 unit_definition = ExtResource("8_spearmen")
 team_id = 1
-initial_center = Vector3(-14, 0, -10)
+initial_center = Vector3(-8, 0, -5)
 initial_facing = Vector3(0, 0, 1)
 soldier_color = Color(0.9, 0.33, 0.3, 1)
+defender_hold_enabled = true
+defender_anchor = Vector3(-8, 0, -5)
+
+[node name="EnemySpearmenTwo" parent="." instance=ExtResource("3_formation")]
+unit_definition = ExtResource("8_spearmen")
+team_id = 1
+initial_center = Vector3(8, 0, -5)
+initial_facing = Vector3(0, 0, 1)
+soldier_color = Color(0.9, 0.33, 0.3, 1)
+defender_hold_enabled = true
+defender_anchor = Vector3(8, 0, -5)
 
 [node name="EnemyCavalry" parent="." instance=ExtResource("3_formation")]
 unit_definition = ExtResource("9_cavalry")
 team_id = 1
 soldier_count = 18
 columns = 6
-initial_center = Vector3(-8, 0, -14)
+initial_center = Vector3(0, 0, -19)
+soldier_count = 20
 initial_facing = Vector3(0, 0, 1)
 soldier_color = Color(0.43, 0.12, 0.16, 1)
+defender_hold_enabled = true
+defender_anchor = Vector3(0, 0, -19)
+
+[node name="EnemyArchers" parent="." instance=ExtResource("3_formation")]
+unit_definition = ExtResource("10_archers")
+team_id = 1
+soldier_count = 24
+columns = 8
+initial_center = Vector3(-8, 0, -13)
+soldier_count = 20
+initial_facing = Vector3(0, 0, 1)
+soldier_color = Color(0.72, 0.28, 0.6, 1)
+defender_hold_enabled = true
+defender_anchor = Vector3(-8, 0, -13)
+
+[node name="EnemyArchersTwo" parent="." instance=ExtResource("3_formation")]
+unit_definition = ExtResource("10_archers")
+team_id = 1
+soldier_count = 20
+columns = 8
+initial_center = Vector3(8, 0, -13)
+initial_facing = Vector3(0, 0, 1)
+soldier_color = Color(0.72, 0.28, 0.6, 1)
+defender_hold_enabled = true
+defender_anchor = Vector3(8, 0, -13)
+
+[node name="EnemyWarlord" type="Node3D" parent="."]
+position = Vector3(0, 0, -24)
+team_id = 1
+script = ExtResource("12_warlord")
+
+[node name="CentralKeep" type="Node3D" parent="."]
+position = Vector3(0, 0, -29)
+team_id = 1
+max_health = 9000.0
+footprint_size = Vector2(7, 7)
+body_color = Color(0.38, 0.34, 0.3, 1)
+script = ExtResource("14_keep")
+
+[node name="LeftTower" type="Node3D" parent="."]
+position = Vector3(-12, 0, -19)
+team_id = 1
+max_health = 3000.0
+footprint_size = Vector2(2.4, 2.4)
+body_color = Color(0.48, 0.34, 0.28, 1)
+script = ExtResource("15_tower")
+
+[node name="RightTower" type="Node3D" parent="."]
+position = Vector3(12, 0, -19)
+team_id = 1
+max_health = 3000.0
+footprint_size = Vector2(2.4, 2.4)
+body_color = Color(0.48, 0.34, 0.28, 1)
+script = ExtResource("15_tower")
+
+[node name="BarricadeLeft" type="Node3D" parent="."]
+position = Vector3(-35, 0, 2)
+team_id = 1
+max_health = 1800.0
+footprint_size = Vector2(14.0, 1.2)
+body_color = Color(0.36, 0.2, 0.12, 1)
+script = ExtResource("16_barricade")
+
+[node name="BarricadeCenter" type="Node3D" parent="."]
+position = Vector3(-21, 0, 2)
+team_id = 1
+max_health = 1800.0
+footprint_size = Vector2(14.0, 1.2)
+body_color = Color(0.36, 0.2, 0.12, 1)
+script = ExtResource("16_barricade")
+
+[node name="BarricadeRight" type="Node3D" parent="."]
+position = Vector3(-7, 0, 2)
+team_id = 1
+max_health = 1800.0
+footprint_size = Vector2(14.0, 1.2)
+body_color = Color(0.36, 0.2, 0.12, 1)
+script = ExtResource("16_barricade")
+
+[node name="BarricadeInnerLeft" type="Node3D" parent="."]
+position = Vector3(7, 0, 2)
+team_id = 1
+max_health = 1800.0
+footprint_size = Vector2(14.0, 1.2)
+body_color = Color(0.36, 0.2, 0.12, 1)
+script = ExtResource("16_barricade")
+
+[node name="BarricadeFarRight" type="Node3D" parent="."]
+position = Vector3(21, 0, 2)
+team_id = 1
+max_health = 1800.0
+footprint_size = Vector2(14.0, 1.2)
+body_color = Color(0.36, 0.2, 0.12, 1)
+script = ExtResource("16_barricade")
+
+[node name="BarricadeFarLeft" type="Node3D" parent="."]
+position = Vector3(35, 0, 2)
+team_id = 1
+max_health = 1800.0
+footprint_size = Vector2(14.0, 1.2)
+body_color = Color(0.36, 0.2, 0.12, 1)
+script = ExtResource("16_barricade")
 
 [node name="FormationInput" type="Node" parent="."]
 script = ExtResource("4_input")
 camera_path = NodePath("../RTSCamera")
-player_formation_paths = [NodePath("../PlayerSpearmen"), NodePath("../PlayerCavalry"), NodePath("../PlayerArchers")]
-enemy_formation_paths = [NodePath("../EnemySpearmen"), NodePath("../EnemyCavalry")]
+selection_overlay_path = NodePath("../CombatHud/SelectionBoxOverlay")
+player_formation_paths = [NodePath("../PlayerSpearmen"), NodePath("../PlayerSpearmenTwo"), NodePath("../PlayerCavalry"), NodePath("../PlayerArchers"), NodePath("../PlayerArchersTwo")]
+enemy_formation_paths = [NodePath("../EnemySpearmen"), NodePath("../EnemySpearmenTwo"), NodePath("../EnemyCavalry"), NodePath("../EnemyArchers"), NodePath("../EnemyArchersTwo")]
+enemy_structure_paths = [NodePath("../CentralKeep"), NodePath("../LeftTower"), NodePath("../RightTower"), NodePath("../BarricadeLeft"), NodePath("../BarricadeCenter"), NodePath("../BarricadeRight"), NodePath("../BarricadeFarLeft"), NodePath("../BarricadeFarRight"), NodePath("../BarricadeInnerLeft")]
+enemy_warlord_path = NodePath("../EnemyWarlord")
 warlord_path = NodePath("../Warlord")
 
 [node name="CombatResolver" type="Node" parent="."]
@@ -85,8 +225,21 @@ script = ExtResource("5_combat")
 [node name="CombatHud" type="CanvasLayer" parent="."]
 script = ExtResource("6_hud")
 
+[node name="SelectionBoxOverlay" type="Control" parent="CombatHud"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("17_selection_overlay")
+
 [node name="CombatFeedback" type="Node3D" parent="."]
 script = ExtResource("7_feedback")
 
 [node name="ArrowVolleyVisuals" type="Node3D" parent="."]
 script = ExtResource("11_arrows")
+
+[node name="BattleManager" type="Node" parent="."]
+script = ExtResource("13_manager")

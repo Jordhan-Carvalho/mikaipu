@@ -1,13 +1,19 @@
 class_name Formation
-extends Node3D
+extends DamageableTarget
 
 const SOLDIER_SCENE := preload("res://scenes/units/soldier.tscn")
 const FORMATION_STATUS_DISPLAY_SCRIPT := preload("res://scripts/battle/formation_status_display.gd")
+const BREACH_TRANSIT_COLUMNS := 2
+const BREACH_TRANSIT_SPACING := 1.1
+const BREACH_TRANSIT_CLEARANCE := 0.8
+const BREACH_CANDIDATE_LATERAL_TOLERANCE := 4.5
+const BREACH_STAGE_SETTLE_SECONDS := 2.5
+const TARGETING_COLLISION_LAYER := 1 << 6
 enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
 enum AbilityState { NONE, BRACE_PREPARING, BRACED, CAVALRY_READY, CAVALRY_CHARGING, CAVALRY_NEEDS_RESET }
+enum CommandIntent { NONE, MOVE, ATTACK, CHARGE, BRACE, STOP }
 
 @export var unit_definition: UnitDefinition
-@export var team_id := 0
 @export var soldier_count := 30
 @export var columns := 10
 @export var spacing := 1.4
@@ -24,6 +30,9 @@ enum AbilityState { NONE, BRACE_PREPARING, BRACED, CAVALRY_READY, CAVALRY_CHARGI
 @export var local_target_refresh_seconds := 0.25
 @export var local_visual_attack_interval := 0.8
 @export var local_max_attackers_per_target := 6
+@export var defender_hold_enabled := false
+@export var defender_anchor := Vector3.ZERO
+@export var defender_response_range := 14.0
 
 var soldiers: Array[Soldier] = []
 var destination := Vector3(0.0, 0.0, 3.0)
@@ -31,6 +40,9 @@ var facing := Vector3(0.0, 0.0, -1.0)
 var selected := false
 var combat_state := CombatState.IDLE
 var combat_target: Formation
+var structure_target: Structure
+var explicit_attack_target: Node
+var auto_attack_target: Node
 var receiving_direction := "NONE"
 var max_health := 0.0
 var current_health := 0.0
@@ -40,18 +52,32 @@ var _preview_facing := Vector3.FORWARD
 var _debug_mesh: ImmediateMesh
 var _debug_instance: MeshInstance3D
 var _debug_material: StandardMaterial3D
+var _debug_line_count := 0
 var _local_target_refresh_remaining := 0.0
 var local_melee_debug_enabled := false
 var ability_state := AbilityState.NONE
 var brace_facing := Vector3.FORWARD
 var _brace_remaining := 0.0
 var _charge_target: Formation
+var _charge_blocker: Structure
 var _charge_start_center := Vector3.ZERO
 var _last_charge_target: Formation
-var ranged_target: Formation
+var ranged_target: Node
 var ranged_volley_cooldown := 0.0
 var command_aura_multiplier := 1.0
 var battle_roar_multiplier := 1.0
+var _movement_blockers: Array[Structure] = []
+var _breach_transit_active := false
+var _breach_transit_crossing := false
+var _breach_barricade: Barricade
+var _breach_final_destination := Vector3.ZERO
+var _breach_final_facing := Vector3.FORWARD
+var _breach_direction := Vector3.FORWARD
+var _breach_stage_elapsed := 0.0
+var command_intent := CommandIntent.NONE
+var auto_attack_enabled := false
+var auto_attack_suppression_remaining := 0.0
+var _interaction_area: Area3D
 
 func _ready() -> void:
 	_apply_unit_definition()
@@ -68,18 +94,27 @@ func _ready() -> void:
 		soldier.set_placeholder_color(soldier_color)
 		soldier.set_placeholder_scale(_get_placeholder_scale())
 		soldier.configure_local_melee(local_melee_acquisition_range, local_melee_distance, local_melee_max_deviation, local_visual_attack_interval)
+		soldier.set_movement_blockers(_movement_blockers)
 		soldier.set_desired_slot(slot, facing)
 		soldiers.append(soldier)
 	_create_status_display()
+	_create_interaction_hitbox()
 	_rebuild_debug_mesh()
 
 func _process(_delta: float) -> void:
+	auto_attack_suppression_remaining = maxf(0.0, auto_attack_suppression_remaining - _delta)
+	_refresh_attack_targets()
 	_update_ability_state(_delta)
 	ranged_volley_cooldown = maxf(0.0, ranged_volley_cooldown - _delta)
 	if selected or local_melee_debug_enabled:
 		_rebuild_debug_mesh()
 
 func _physics_process(delta: float) -> void:
+	_update_breach_transit()
+	if get_structure_target() != null and not is_archer():
+		_update_structure_approach()
+	elif combat_target == null and get_explicit_attack_target() != null and not is_archer() and not (get_explicit_attack_target() is Structure):
+		_update_generic_target_approach()
 	if _can_run_local_melee():
 		_local_target_refresh_remaining -= delta
 		if _local_target_refresh_remaining <= 0.0:
@@ -93,11 +128,74 @@ func issue_order(new_destination: Vector3, new_facing: Vector3) -> void:
 		return
 	_cancel_active_ability()
 	clear_ranged_target()
-	destination = _flat(new_destination)
+	clear_structure_target()
+	explicit_attack_target = null
+	auto_attack_target = null
 	facing = _safe_facing(new_facing, facing)
+	var requested := _flat(new_destination)
+	if not _begin_breach_transit(requested, facing):
+		destination = _clamp_destination_to_blocker(requested)
+		_apply_slots(destination, facing)
 	combat_state = CombatState.MOVING
-	_apply_slots(destination, facing)
+	command_intent = CommandIntent.MOVE
 	clear_order_preview()
+
+func issue_attack_order(target: Node) -> bool:
+	if target == null or not is_instance_valid(target) or not target.has_method("is_target_alive") or not target.call("is_target_alive"):
+		return false
+	if int(target.get("team_id")) == team_id or combat_state == CombatState.DEFEATED:
+		return false
+	if target is Structure:
+		return set_structure_target(target)
+	if is_archer():
+		return set_ranged_target(target)
+	clear_ranged_target()
+	clear_structure_target()
+	issue_order(target.call("get_target_position"), target.call("get_target_position") - get_current_center())
+	explicit_attack_target = target
+	command_intent = CommandIntent.ATTACK
+	return true
+
+func set_auto_attack_target(target: Node) -> bool:
+	if not can_auto_attack() or target == null or not is_instance_valid(target) or int(target.get("team_id")) == team_id:
+		return false
+	auto_attack_target = target
+	if is_archer():
+		ranged_target = target
+		return true
+	issue_order(target.call("get_target_position"), target.call("get_target_position") - get_current_center())
+	auto_attack_target = target
+	command_intent = CommandIntent.NONE
+	return true
+
+func stop() -> void:
+	if combat_state == CombatState.DEFEATED:
+		return
+	_cancel_active_ability()
+	clear_ranged_target()
+	clear_structure_target()
+	combat_target = null
+	explicit_attack_target = null
+	auto_attack_target = null
+	_clear_local_melee_targets()
+	_clear_breach_transit()
+	destination = get_current_center()
+	_apply_slots(destination, facing)
+	combat_state = CombatState.IDLE
+	command_intent = CommandIntent.STOP
+	auto_attack_suppression_remaining = 0.6
+
+func can_auto_attack() -> bool:
+	return auto_attack_enabled and auto_attack_suppression_remaining <= 0.0 and command_intent == CommandIntent.NONE and combat_state == CombatState.IDLE and get_explicit_attack_target() == null and auto_attack_target == null and get_structure_target() == null and get_ranged_target() == null
+
+func get_command_name() -> String:
+	match command_intent:
+		CommandIntent.MOVE: return "MOVE"
+		CommandIntent.ATTACK: return "ATTACK"
+		CommandIntent.CHARGE: return "CHARGE"
+		CommandIntent.BRACE: return "BRACE"
+		CommandIntent.STOP: return "STOP"
+	return "NONE"
 
 func set_order_preview(new_destination: Vector3, new_facing: Vector3) -> void:
 	_preview_active = true
@@ -143,6 +241,15 @@ func get_living_soldiers() -> Array[Soldier]:
 			living.append(soldier)
 	return living
 
+func get_impact_points(count: int) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	var living := get_living_soldiers()
+	if living.is_empty():
+		return points
+	for index in range(maxi(1, count)):
+		points.append(living[randi() % living.size()].global_position + Vector3(randf_range(-0.7, 0.7), 0.08, randf_range(-0.7, 0.7)))
+	return points
+
 func get_alive_count() -> int:
 	return get_living_soldiers().size()
 
@@ -186,23 +293,124 @@ func set_battle_roar_multiplier(value: float) -> void:
 func get_outgoing_damage_multiplier() -> float:
 	return command_aura_multiplier * battle_roar_multiplier
 
-func set_ranged_target(target: Formation) -> bool:
-	if not is_archer() or target == null or target.team_id == team_id or target.combat_state == CombatState.DEFEATED:
+func is_target_alive() -> bool:
+	return combat_state != CombatState.DEFEATED
+
+func get_target_position() -> Vector3:
+	return get_current_center()
+
+func get_targeting_center() -> Vector3:
+	return get_current_center() + Vector3.UP * 0.9
+
+func get_targeting_radius() -> float:
+	var alive_count := maxi(1, get_alive_count())
+	var width := (mini(columns, alive_count) - 1) * spacing + 1.5
+	var depth := (get_row_count(alive_count) - 1) * spacing + 1.5
+	return Vector2(width, depth).length() * 0.5
+
+func receive_target_damage(amount: float, source_position: Vector3, damage_kind := "DIRECT") -> float:
+	if damage_kind == "RANGED":
+		return receive_ranged_damage(amount, source_position, source_position)
+	return receive_damage(amount, damage_kind, source_position)
+
+func set_movement_blockers(blockers: Array) -> void:
+	_movement_blockers.clear()
+	for blocker in blockers:
+		if blocker is Structure:
+			_movement_blockers.append(blocker)
+	for soldier in soldiers:
+		soldier.set_movement_blockers(_movement_blockers)
+
+func set_structure_target(target: Structure) -> bool:
+	if target == null or target.team_id == team_id or not target.is_target_alive() or combat_state == CombatState.DEFEATED:
+		return false
+	structure_target = target
+	explicit_attack_target = target
+	auto_attack_target = null
+	_clear_breach_transit()
+	if is_archer():
+		ranged_target = target
+		command_intent = CommandIntent.ATTACK
+		return true
+	clear_ranged_target()
+	command_intent = CommandIntent.ATTACK
+	_update_structure_approach()
+	return true
+
+func clear_structure_target() -> void:
+	if explicit_attack_target == structure_target:
+		explicit_attack_target = null
+	structure_target = null
+
+func get_structure_target() -> Structure:
+	if structure_target != null and (not is_instance_valid(structure_target) or not structure_target.is_target_alive()):
+		structure_target = null
+	return structure_target
+
+func get_structure_order_status() -> String:
+	var target := get_structure_target()
+	if target == null:
+		return "NONE"
+	var formation_half_depth := (get_row_count(get_alive_count()) - 1) * spacing * 0.5
+	var desired := target.get_attack_position(get_current_center(), melee_range, formation_half_depth)
+	var blocker := _get_first_blocker(get_current_center(), desired)
+	if blocker != null and blocker != target:
+		return "BLOCKED BY %s" % blocker.structure_name
+	return "ATTACKING" if get_current_center().distance_to(destination) <= 0.15 else "APPROACHING"
+
+func set_ranged_target(target: Node, explicit_command := true) -> bool:
+	if not is_archer() or target == null or int(target.get("team_id")) == team_id or not target.call("is_target_alive"):
 		return false
 	ranged_target = target
+	if explicit_command:
+		explicit_attack_target = target
+		auto_attack_target = null
+		command_intent = CommandIntent.ATTACK
+	else:
+		auto_attack_target = target
 	return true
 
 func clear_ranged_target() -> void:
+	if explicit_attack_target == ranged_target:
+		explicit_attack_target = null
+	if auto_attack_target == ranged_target:
+		auto_attack_target = null
 	ranged_target = null
 
-func get_ranged_target() -> Formation:
-	if ranged_target == null or not is_instance_valid(ranged_target) or ranged_target.combat_state == CombatState.DEFEATED:
+func get_explicit_attack_target() -> Node:
+	if not _is_live_attack_target(explicit_attack_target):
+		return null
+	return explicit_attack_target
+
+func _refresh_attack_targets() -> void:
+	if explicit_attack_target != null and not _is_live_attack_target(explicit_attack_target):
+		if structure_target == explicit_attack_target:
+			structure_target = null
+		if ranged_target == explicit_attack_target:
+			ranged_target = null
+		explicit_attack_target = null
+		if command_intent == CommandIntent.ATTACK:
+			command_intent = CommandIntent.NONE
+			if combat_target == null:
+				combat_state = CombatState.IDLE
+	if auto_attack_target != null and not _is_live_attack_target(auto_attack_target):
+		if ranged_target == auto_attack_target:
+			ranged_target = null
+		auto_attack_target = null
+		if command_intent == CommandIntent.NONE and combat_target == null:
+			combat_state = CombatState.IDLE
+
+func _is_live_attack_target(target: Node) -> bool:
+	return target != null and is_instance_valid(target) and target.has_method("is_target_alive") and target.call("is_target_alive")
+
+func get_ranged_target() -> Node:
+	if ranged_target == null or not is_instance_valid(ranged_target) or not ranged_target.call("is_target_alive"):
 		ranged_target = null
 	return ranged_target
 
 func get_ranged_distance() -> float:
 	var target := get_ranged_target()
-	return get_current_center().distance_to(target.get_current_center()) if target != null else 0.0
+	return get_current_center().distance_to(target.call("get_target_position")) if target != null else 0.0
 
 func get_ranged_status() -> String:
 	if not is_archer():
@@ -214,7 +422,7 @@ func get_ranged_status() -> String:
 		return "SUPPRESSED BY MELEE"
 	if get_ranged_distance() > unit_definition.ranged_max_range:
 		return "OUT OF RANGE"
-	var to_target := _safe_facing(target.get_current_center() - get_current_center(), facing)
+	var to_target := _safe_facing(target.call("get_target_position") - get_current_center(), facing)
 	if facing.dot(to_target) < 0.995:
 		return "TURNING"
 	if ranged_volley_cooldown > 0.0:
@@ -224,7 +432,7 @@ func get_ranged_status() -> String:
 func prepare_ranged_volley() -> bool:
 	if get_ranged_status() == "TURNING":
 		var target := get_ranged_target()
-		facing = _safe_facing(target.get_current_center() - get_current_center(), facing)
+		facing = _safe_facing(target.call("get_target_position") - get_current_center(), facing)
 		_apply_slots(destination, facing)
 		return false
 	if get_ranged_status() != "FIRING":
@@ -250,6 +458,7 @@ func toggle_brace() -> bool:
 	if not _is_effectively_stationary():
 		return false
 	ability_state = AbilityState.BRACE_PREPARING
+	command_intent = CommandIntent.BRACE
 	_brace_remaining = _brace_preparation_seconds()
 	return true
 
@@ -264,16 +473,23 @@ func start_charge(target: Formation) -> bool:
 	if distance < _minimum_charge_distance() or angle > _charge_facing_half_angle():
 		return false
 	_charge_target = target
+	_charge_blocker = _get_first_blocker(get_current_center(), target.get_current_center())
 	_charge_start_center = get_current_center()
 	ability_state = AbilityState.CAVALRY_CHARGING
+	command_intent = CommandIntent.CHARGE
 	_set_soldier_speed_multiplier(_charge_speed_multiplier())
-	destination = target.get_current_center()
+	destination = _charge_blocker.get_target_position() if _charge_blocker != null else target.get_current_center()
 	facing = to_target
 	_apply_slots(destination, facing)
 	return true
 
 func get_charge_target() -> Formation:
 	return _charge_target
+
+func get_charge_blocker() -> Structure:
+	if _charge_blocker != null and (not is_instance_valid(_charge_blocker) or not _charge_blocker.is_target_alive()):
+		_charge_blocker = null
+	return _charge_blocker
 
 func get_charge_travelled() -> float:
 	return get_current_center().distance_to(_charge_start_center) if ability_state == AbilityState.CAVALRY_CHARGING else 0.0
@@ -286,8 +502,11 @@ func consume_charge() -> void:
 		return
 	_last_charge_target = _charge_target
 	_charge_target = null
+	_charge_blocker = null
 	ability_state = AbilityState.CAVALRY_NEEDS_RESET
 	_set_soldier_speed_multiplier(1.0)
+	if command_intent == CommandIntent.CHARGE:
+		command_intent = CommandIntent.NONE
 
 func is_effectively_braced() -> bool:
 	return ability_state == AbilityState.BRACED
@@ -318,9 +537,11 @@ func halt_movement() -> void:
 	if combat_state == CombatState.DEFEATED:
 		return
 	destination = get_current_center()
+	_clear_breach_transit()
 	_apply_slots(destination, facing)
 	combat_state = CombatState.IDLE
 	combat_target = null
+	command_intent = CommandIntent.NONE
 	_clear_local_melee_targets()
 
 func hold_position_in_combat() -> void:
@@ -361,10 +582,14 @@ func _receive_damage(amount: float, incoming_direction: String, attacker_positio
 			break
 		var casualty := _find_ranged_casualty(living, impact_position) if impact_position.is_finite() else _find_closest_soldier(living, attacker_position)
 		casualty.die()
-	_apply_slots(destination, facing)
+	if get_structure_target() != null and not is_archer():
+		_apply_structure_contact_slots(get_structure_target(), get_current_center())
+	else:
+		_apply_slots(destination, facing)
 	if get_alive_count() == 0:
 		combat_state = CombatState.DEFEATED
 		combat_target = null
+		explicit_attack_target = null
 		_clear_local_melee_targets()
 		_cancel_active_ability()
 	return applied_damage
@@ -395,6 +620,8 @@ func _update_ability_state(delta: float) -> void:
 			_cancel_charge(false)
 	elif ability_state == AbilityState.CAVALRY_NEEDS_RESET:
 		_try_rearm_charge()
+	if command_intent == CommandIntent.STOP and auto_attack_suppression_remaining <= 0.0:
+		command_intent = CommandIntent.NONE
 
 func _cancel_active_ability() -> void:
 	if ability_state == AbilityState.BRACED or ability_state == AbilityState.BRACE_PREPARING:
@@ -406,6 +633,8 @@ func _cancel_brace() -> void:
 	if ability_state == AbilityState.BRACED or ability_state == AbilityState.BRACE_PREPARING:
 		ability_state = AbilityState.NONE
 		_brace_remaining = 0.0
+		if command_intent == CommandIntent.BRACE:
+			command_intent = CommandIntent.NONE
 
 func _cancel_charge(consumed: bool) -> void:
 	if ability_state != AbilityState.CAVALRY_CHARGING:
@@ -414,6 +643,8 @@ func _cancel_charge(consumed: bool) -> void:
 	_charge_target = null
 	ability_state = AbilityState.CAVALRY_NEEDS_RESET if consumed else AbilityState.CAVALRY_READY
 	_set_soldier_speed_multiplier(1.0)
+	if command_intent == CommandIntent.CHARGE:
+		command_intent = CommandIntent.NONE
 
 func _try_rearm_charge() -> void:
 	if ability_state != AbilityState.CAVALRY_NEEDS_RESET:
@@ -421,6 +652,163 @@ func _try_rearm_charge() -> void:
 	if _last_charge_target == null or not is_instance_valid(_last_charge_target) or get_current_center().distance_to(_last_charge_target.get_current_center()) >= _minimum_charge_distance():
 		ability_state = AbilityState.CAVALRY_READY
 		_last_charge_target = null
+
+func _update_structure_approach() -> void:
+	var target := get_structure_target()
+	if target == null or combat_state == CombatState.DEFEATED:
+		return
+	var center := get_current_center()
+	var layout := target.get_melee_contact_layout(center, melee_range, spacing, get_alive_count())
+	var desired: Vector3 = layout.get("anchor", center) as Vector3
+	destination = _clamp_destination_to_blocker(desired)
+	facing = _safe_facing(layout.get("facing", facing) as Vector3, facing)
+	_apply_structure_contact_slots(target, center)
+	if get_current_center().distance_to(destination) > 0.15:
+		combat_state = CombatState.MOVING
+	else:
+		combat_state = CombatState.IDLE
+
+func _apply_structure_contact_slots(target: Structure, approach_center: Vector3) -> void:
+	var layout := target.get_melee_contact_layout(approach_center, melee_range, spacing, get_alive_count())
+	var slots: Array = layout.get("slots", []) as Array
+	var living := get_living_soldiers()
+	for index in range(mini(living.size(), slots.size())):
+		living[index].set_desired_slot(slots[index] as Vector3, facing)
+
+func _update_generic_target_approach() -> void:
+	var target := get_explicit_attack_target()
+	if target == null or combat_state == CombatState.DEFEATED:
+		return
+	var center := get_current_center()
+	var target_position: Vector3 = target.call("get_target_position")
+	var to_target := _safe_facing(target_position - center, facing)
+	var desired := target_position - to_target * maxf(0.35, melee_range * 0.55)
+	destination = _clamp_destination_to_blocker(desired)
+	facing = to_target
+	_apply_slots(destination, facing)
+	if get_current_center().distance_to(destination) > 0.15:
+		combat_state = CombatState.MOVING
+
+func _begin_breach_transit(requested: Vector3, requested_facing: Vector3) -> bool:
+	_clear_breach_transit()
+	var source := get_current_center()
+	var travel := _flat(requested - source)
+	if travel.length_squared() < 1.0:
+		return false
+	var direction := travel.normalized()
+	var candidate: Barricade
+	var best_score := INF
+	for blocker in _movement_blockers:
+		if not (blocker is Barricade) or not is_instance_valid(blocker) or blocker.is_target_alive():
+			continue
+		var to_breach := _flat(blocker.global_position - source)
+		var progress := to_breach.dot(direction)
+		if progress <= 0.5 or progress >= travel.length() - 0.5:
+			continue
+		var lateral := (to_breach - direction * progress).length()
+		if lateral > maxf(BREACH_CANDIDATE_LATERAL_TOLERANCE, blocker.footprint_size.x * 0.75):
+			continue
+		var score := lateral + progress * 0.01
+		if score < best_score:
+			best_score = score
+			candidate = blocker as Barricade
+	if candidate == null:
+		return false
+	_breach_transit_active = true
+	_breach_transit_crossing = false
+	_breach_barricade = candidate
+	_breach_final_destination = requested
+	_breach_final_facing = requested_facing
+	_breach_direction = direction
+	_breach_stage_elapsed = 0.0
+	destination = _get_breach_stream_center(false)
+	_apply_breach_slots(destination, _breach_direction)
+	return true
+
+func _update_breach_transit() -> void:
+	if not _breach_transit_active:
+		return
+	if _breach_barricade == null or not is_instance_valid(_breach_barricade):
+		_clear_breach_transit()
+		return
+	_breach_stage_elapsed += get_physics_process_delta_time()
+	if not _all_living_soldiers_near_desired_slots() and _breach_stage_elapsed < BREACH_STAGE_SETTLE_SECONDS:
+		return
+	if not _breach_transit_crossing:
+		_breach_transit_crossing = true
+		_breach_stage_elapsed = 0.0
+		destination = _get_breach_stream_center(true)
+		_apply_breach_slots(destination, _breach_direction)
+		return
+	destination = _breach_final_destination
+	facing = _breach_final_facing
+	_apply_slots(destination, facing)
+	_clear_breach_transit(false)
+
+func _get_breach_stream_center(on_exit_side: bool) -> Vector3:
+	var count := maxi(1, get_alive_count())
+	var rows := ceili(float(count) / float(BREACH_TRANSIT_COLUMNS))
+	var stream_half_depth := (float(rows - 1) * BREACH_TRANSIT_SPACING) * 0.5
+	var barricade_half_depth := maxf(_breach_barricade.footprint_size.x, _breach_barricade.footprint_size.y) * 0.5
+	var offset := stream_half_depth + barricade_half_depth + BREACH_TRANSIT_CLEARANCE
+	return _breach_barricade.global_position + _breach_direction * (offset if on_exit_side else -offset)
+
+func _apply_breach_slots(center: Vector3, direction: Vector3) -> void:
+	var living := get_living_soldiers()
+	var slots := _calculate_breach_slots(center, direction, living.size())
+	for index in range(mini(living.size(), slots.size())):
+		living[index].set_desired_slot(slots[index], direction)
+
+func _calculate_breach_slots(center: Vector3, direction: Vector3, count: int) -> Array[Vector3]:
+	var slots: Array[Vector3] = []
+	var forward := _safe_facing(direction, Vector3.FORWARD)
+	var right := forward.cross(Vector3.UP).normalized()
+	var rows := ceili(float(count) / float(BREACH_TRANSIT_COLUMNS))
+	for index in range(count):
+		var row := index / BREACH_TRANSIT_COLUMNS
+		var column := index % BREACH_TRANSIT_COLUMNS
+		var columns_in_row := mini(BREACH_TRANSIT_COLUMNS, count - row * BREACH_TRANSIT_COLUMNS)
+		var x := (float(column) - float(columns_in_row - 1) * 0.5) * BREACH_TRANSIT_SPACING
+		var z := (float(row) - float(rows - 1) * 0.5) * BREACH_TRANSIT_SPACING
+		slots.append(center + right * x - forward * z)
+	return slots
+
+func _all_living_soldiers_near_desired_slots() -> bool:
+	for soldier in get_living_soldiers():
+		if soldier.global_position.distance_to(soldier.desired_slot) > 0.45:
+			return false
+	return true
+
+func _clear_breach_transit(clear_slots := true) -> void:
+	_breach_transit_active = false
+	_breach_transit_crossing = false
+	_breach_barricade = null
+	_breach_stage_elapsed = 0.0
+	if clear_slots and combat_state != CombatState.DEFEATED:
+		_apply_slots(destination, facing)
+
+func _clamp_destination_to_blocker(requested: Vector3) -> Vector3:
+	var blocker := _get_first_blocker(get_current_center(), requested)
+	if blocker == null:
+		return requested
+	var hit := blocker.blocks_segment(get_current_center(), requested, spacing)
+	return hit.get("point", requested) as Vector3
+
+func _get_first_blocker(from: Vector3, to: Vector3) -> Structure:
+	var nearest: Structure
+	var nearest_distance := INF
+	for blocker in _movement_blockers:
+		if not is_instance_valid(blocker) or not blocker.is_target_alive():
+			continue
+		var hit := blocker.blocks_segment(from, to, spacing)
+		if hit.is_empty():
+			continue
+		var point: Vector3 = hit.get("point", from) as Vector3
+		var distance := from.distance_squared_to(point)
+		if distance < nearest_distance:
+			nearest = blocker
+			nearest_distance = distance
+	return nearest
 
 func _set_soldier_speed_multiplier(multiplier: float) -> void:
 	for soldier in soldiers:
@@ -507,8 +895,24 @@ func _create_status_display() -> void:
 	display.call("configure", self)
 	add_child(display)
 
+func _create_interaction_hitbox() -> void:
+	_interaction_area = Area3D.new()
+	_interaction_area.name = "TargetingHitbox"
+	_interaction_area.collision_layer = TARGETING_COLLISION_LAYER
+	_interaction_area.collision_mask = 0
+	_interaction_area.monitoring = false
+	_interaction_area.monitorable = true
+	_interaction_area.set_meta("attackable_target", self)
+	var collision := CollisionShape3D.new()
+	var shape := SphereShape3D.new()
+	shape.radius = get_targeting_radius()
+	collision.shape = shape
+	collision.position = Vector3.UP * 0.9
+	_interaction_area.add_child(collision)
+	add_child(_interaction_area)
+
 func _can_run_local_melee() -> bool:
-	return combat_target != null and is_instance_valid(combat_target) and combat_target.combat_state != CombatState.DEFEATED and get_alive_count() > 0
+	return not _breach_transit_active and combat_target != null and is_instance_valid(combat_target) and combat_target.combat_state != CombatState.DEFEATED and get_alive_count() > 0
 
 func _assign_local_melee_targets() -> void:
 	var enemies: Array[Soldier] = combat_target.get_living_soldiers()
@@ -573,6 +977,7 @@ func _rebuild_debug_mesh() -> void:
 	_debug_mesh.clear_surfaces()
 	if not selected and not local_melee_debug_enabled:
 		return
+	_debug_line_count = 0
 	_debug_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	if selected:
 		_draw_current_center(Color(0.35, 1.0, 0.35, 0.95))
@@ -582,7 +987,8 @@ func _rebuild_debug_mesh() -> void:
 	if local_melee_debug_enabled:
 		_draw_local_melee_debug()
 		_draw_ability_debug()
-	_debug_mesh.surface_end()
+	if _debug_line_count > 0:
+		_debug_mesh.surface_end()
 
 func _draw_local_melee_debug() -> void:
 	for soldier in get_living_soldiers():
@@ -614,7 +1020,7 @@ func _draw_ranged_debug(center: Vector3) -> void:
 		previous = current
 	var target := get_ranged_target()
 	if target != null:
-		_add_line(center, to_local(target.get_current_center()) + Vector3.UP * 0.2, Color(0.3, 1.0, 0.4, 0.95))
+		_add_line(center, to_local(target.call("get_target_position")) + Vector3.UP * 0.2, Color(0.3, 1.0, 0.4, 0.95))
 
 func _draw_current_center(color: Color) -> void:
 	var center := to_local(get_current_center()) + Vector3.UP * 0.05
@@ -645,6 +1051,7 @@ func _add_line(from: Vector3, to: Vector3, color: Color) -> void:
 	_debug_mesh.surface_add_vertex(from)
 	_debug_mesh.surface_set_color(color)
 	_debug_mesh.surface_add_vertex(to)
+	_debug_line_count += 1
 
 func _flat(point: Vector3) -> Vector3: return Vector3(point.x, 0.0, point.z)
 func _safe_facing(candidate: Vector3, fallback: Vector3) -> Vector3:

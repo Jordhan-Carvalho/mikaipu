@@ -14,6 +14,8 @@ var local_acquisition_range := 3.0
 var desired_melee_distance := 0.85
 var maximum_slot_deviation := 2.5
 var visual_attack_interval := 0.8
+var barricade_padding := 0.35
+var _movement_blockers: Array[Structure] = []
 var _attack_cooldown := 0.0
 var _body_material: StandardMaterial3D
 var _body: MeshInstance3D
@@ -43,6 +45,12 @@ func configure_local_melee(acquisition_range: float, melee_distance: float, max_
 	desired_melee_distance = melee_distance
 	maximum_slot_deviation = max_deviation
 	visual_attack_interval = attack_interval
+
+func set_movement_blockers(blockers: Array) -> void:
+	_movement_blockers.clear()
+	for blocker in blockers:
+		if blocker is Structure:
+			_movement_blockers.append(blocker)
 
 func enter_local_melee(target: Soldier) -> void:
 	if not is_alive or target == null or not target.is_alive:
@@ -107,9 +115,26 @@ func _physics_process(delta: float) -> void:
 		if target_to_face.length_squared() > 0.0001:
 			look_at(global_position + _flat_direction(target_to_face), Vector3.UP, true)
 		return
-	global_position += offset.normalized() * minf(movement_speed * delta, offset.length())
+	var next_position := global_position + offset.normalized() * minf(movement_speed * delta, offset.length())
+	global_position = _clamp_to_barricade(global_position, next_position)
 	var facing_direction := target_to_face if target_to_face.length_squared() > 0.0001 else offset
 	look_at(global_position + _flat_direction(facing_direction), Vector3.UP, true)
+
+func _clamp_to_barricade(from: Vector3, requested: Vector3) -> Vector3:
+	var nearest_point := requested
+	var nearest_distance := INF
+	for blocker in _movement_blockers:
+		if not is_instance_valid(blocker) or not blocker.is_target_alive():
+			continue
+		var hit := blocker.blocks_segment(from, requested, barricade_padding)
+		if hit.is_empty():
+			continue
+		var point: Vector3 = hit.get("point", requested) as Vector3
+		var distance := from.distance_squared_to(point)
+		if distance < nearest_distance:
+			nearest_point = Vector3(point.x, global_position.y, point.z)
+			nearest_distance = distance
+	return nearest_point
 
 func _should_leave_local_melee() -> bool:
 	if not _has_valid_local_target():

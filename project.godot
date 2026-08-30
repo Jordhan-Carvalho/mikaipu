@@ -14,10 +14,6 @@ config/name="Mikaipu - Formation PoC"
 run/main_scene="res://scenes/battle/battle_test.tscn"
 config/features=PackedStringArray("4.7")
 
-[autoload]
-
-McpRuntime="*res://addons/godot-mcp/mcp_runtime.gd"
-
 [display]
 
 window/size/viewport_width=1280
