@@ -15,6 +15,12 @@ enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
 @export var soldier_color := Color("#d5bc70")
 @export var health_per_soldier := 100.0
 @export var melee_range := 1.75
+@export var local_melee_acquisition_range := 3.0
+@export var local_melee_distance := 0.85
+@export var local_melee_max_deviation := 2.5
+@export var local_target_refresh_seconds := 0.25
+@export var local_visual_attack_interval := 0.8
+@export var local_max_attackers_per_target := 2
 
 var soldiers: Array[Soldier] = []
 var destination := Vector3(0.0, 0.0, 3.0)
@@ -31,6 +37,8 @@ var _preview_facing := Vector3.FORWARD
 var _debug_mesh: ImmediateMesh
 var _debug_instance: MeshInstance3D
 var _debug_material: StandardMaterial3D
+var _local_target_refresh_remaining := 0.0
+var local_melee_debug_enabled := false
 
 func _ready() -> void:
 	_create_debug_mesh()
@@ -44,14 +52,24 @@ func _ready() -> void:
 		add_child(soldier)
 		soldier.global_position = slot
 		soldier.set_placeholder_color(soldier_color)
+		soldier.configure_local_melee(local_melee_acquisition_range, local_melee_distance, local_melee_max_deviation, local_visual_attack_interval)
 		soldier.set_desired_slot(slot, facing)
 		soldiers.append(soldier)
 	_create_status_display()
 	_rebuild_debug_mesh()
 
 func _process(_delta: float) -> void:
-	if selected:
+	if selected or local_melee_debug_enabled:
 		_rebuild_debug_mesh()
+
+func _physics_process(delta: float) -> void:
+	if _can_run_local_melee():
+		_local_target_refresh_remaining -= delta
+		if _local_target_refresh_remaining <= 0.0:
+			_assign_local_melee_targets()
+			_local_target_refresh_remaining = local_target_refresh_seconds
+	else:
+		_clear_local_melee_targets()
 
 func issue_order(new_destination: Vector3, new_facing: Vector3) -> void:
 	if combat_state == CombatState.DEFEATED:
@@ -112,6 +130,17 @@ func get_alive_count() -> int:
 func get_max_count() -> int:
 	return soldier_count
 
+func get_local_melee_count() -> int:
+	var count := 0
+	for soldier in get_living_soldiers():
+		if soldier.is_in_local_melee():
+			count += 1
+	return count
+
+func set_local_melee_debug(value: bool) -> void:
+	local_melee_debug_enabled = value
+	_rebuild_debug_mesh()
+
 func get_health_ratio() -> float:
 	if max_health <= 0.0:
 		return 0.0
@@ -122,6 +151,10 @@ func set_combat_state(new_state: int, target: Formation = null) -> void:
 		return
 	combat_state = new_state
 	combat_target = target
+	if combat_target != null:
+		_local_target_refresh_remaining = 0.0
+	elif new_state != CombatState.ENGAGED:
+		_clear_local_melee_targets()
 	if combat_state == CombatState.ENGAGED:
 		clear_order_preview()
 
@@ -129,6 +162,7 @@ func disengage() -> void:
 	if combat_state == CombatState.DEFEATED:
 		return
 	combat_target = null
+	_clear_local_melee_targets()
 	receiving_direction = "NONE"
 	var still_moving := get_current_center().distance_squared_to(destination) > 0.01
 	combat_state = CombatState.MOVING if still_moving else CombatState.IDLE
@@ -140,6 +174,7 @@ func halt_movement() -> void:
 	_apply_slots(destination, facing)
 	combat_state = CombatState.IDLE
 	combat_target = null
+	_clear_local_melee_targets()
 
 func get_state_name() -> String:
 	match combat_state:
@@ -170,12 +205,19 @@ func receive_damage(amount: float, incoming_direction: String, attacker_position
 	if get_alive_count() == 0:
 		combat_state = CombatState.DEFEATED
 		combat_target = null
+		_clear_local_melee_targets()
 	return applied_damage
 
 func _find_closest_soldier(living: Array[Soldier], world_position: Vector3) -> Soldier:
-	var closest: Soldier = living.front() as Soldier
-	var closest_distance: float = closest.global_position.distance_squared_to(world_position)
+	var candidates: Array[Soldier] = []
 	for soldier in living:
+		if soldier.is_in_local_melee():
+			candidates.append(soldier)
+	if candidates.is_empty():
+		candidates = living
+	var closest: Soldier = candidates.front() as Soldier
+	var closest_distance: float = closest.global_position.distance_squared_to(world_position)
+	for soldier in candidates:
 		var distance := soldier.global_position.distance_squared_to(world_position)
 		if distance < closest_distance:
 			closest = soldier
@@ -220,18 +262,91 @@ func _create_status_display() -> void:
 	display.call("configure", self)
 	add_child(display)
 
+func _can_run_local_melee() -> bool:
+	return combat_target != null and is_instance_valid(combat_target) and combat_target.combat_state != CombatState.DEFEATED and get_alive_count() > 0
+
+func _assign_local_melee_targets() -> void:
+	var enemies: Array[Soldier] = combat_target.get_living_soldiers()
+	if enemies.is_empty():
+		_clear_local_melee_targets()
+		return
+	var claims: Dictionary = {}
+	for soldier in get_living_soldiers():
+		if _has_valid_local_target(soldier, enemies):
+			var target_id := soldier.local_target.get_instance_id()
+			claims[target_id] = int(claims.get(target_id, 0)) + 1
+		else:
+			soldier.clear_local_melee()
+	for soldier in get_living_soldiers():
+		if soldier.is_in_local_melee():
+			continue
+		var target := _find_best_local_target(soldier, enemies, claims)
+		if target == null:
+			continue
+		soldier.enter_local_melee(target)
+		var target_id := target.get_instance_id()
+		claims[target_id] = int(claims.get(target_id, 0)) + 1
+
+func _has_valid_local_target(soldier: Soldier, enemies: Array[Soldier]) -> bool:
+	if not soldier.is_in_local_melee() or not enemies.has(soldier.local_target):
+		return false
+	if soldier.global_position.distance_to(soldier.local_target.global_position) > local_melee_acquisition_range:
+		return false
+	return soldier.global_position.distance_to(soldier.desired_slot) <= local_melee_max_deviation + 0.35
+
+func _find_best_local_target(soldier: Soldier, enemies: Array[Soldier], claims: Dictionary) -> Soldier:
+	var best_target: Soldier = null
+	var best_claim_count := maxi(1 << 30, 0)
+	var best_distance_squared: float = INF
+	for enemy in enemies:
+		var distance_squared := soldier.global_position.distance_squared_to(enemy.global_position)
+		if distance_squared > local_melee_acquisition_range * local_melee_acquisition_range:
+			continue
+		var to_enemy := _flat(enemy.global_position - soldier.global_position)
+		if to_enemy.length_squared() < 0.0001:
+			continue
+		var approach_position := enemy.global_position - to_enemy.normalized() * local_melee_distance
+		if _flat(approach_position - soldier.desired_slot).length() > local_melee_max_deviation:
+			continue
+		var claim_count := int(claims.get(enemy.get_instance_id(), 0))
+		if claim_count >= local_max_attackers_per_target:
+			continue
+		if claim_count < best_claim_count or (claim_count == best_claim_count and distance_squared < best_distance_squared):
+			best_target = enemy
+			best_claim_count = claim_count
+			best_distance_squared = distance_squared
+	return best_target
+
+func _clear_local_melee_targets() -> void:
+	for soldier in soldiers:
+		if soldier.is_alive and soldier.movement_mode == Soldier.MovementMode.LOCAL_MELEE:
+			soldier.clear_local_melee()
+
 func _rebuild_debug_mesh() -> void:
 	if _debug_mesh == null:
 		return
 	_debug_mesh.clear_surfaces()
-	if not selected:
+	if not selected and not local_melee_debug_enabled:
 		return
 	_debug_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
-	_draw_current_center(Color(0.35, 1.0, 0.35, 0.95))
-	_draw_formation_debug(destination, facing, Color(1.0, 0.78, 0.16, 0.95))
+	if selected:
+		_draw_current_center(Color(0.35, 1.0, 0.35, 0.95))
+		_draw_formation_debug(destination, facing, Color(1.0, 0.78, 0.16, 0.95))
 	if _preview_active:
 		_draw_formation_debug(_preview_destination, _preview_facing, Color(0.15, 0.95, 1.0, 0.95))
+	if local_melee_debug_enabled:
+		_draw_local_melee_debug()
 	_debug_mesh.surface_end()
+
+func _draw_local_melee_debug() -> void:
+	for soldier in get_living_soldiers():
+		if not soldier.is_in_local_melee():
+			continue
+		var soldier_position := to_local(soldier.global_position) + Vector3.UP * 0.16
+		var target_position := to_local(soldier.local_target.global_position) + Vector3.UP * 0.16
+		var slot_position := to_local(soldier.desired_slot) + Vector3.UP * 0.12
+		_add_line(soldier_position, target_position, Color(1.0, 0.2, 0.8, 0.95))
+		_add_line(soldier_position, slot_position, Color(0.2, 0.9, 1.0, 0.75))
 
 func _draw_current_center(color: Color) -> void:
 	var center := to_local(get_current_center()) + Vector3.UP * 0.05

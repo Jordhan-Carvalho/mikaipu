@@ -21,6 +21,8 @@ Melee damage uses only active combatants. A living soldier is active when at lea
 
 Each formation has an always-visible world-space health bar and surviving-soldier count. Every non-zero formation damage tick creates one floating damage number near the receiving contact line. Debug builds append the incoming direction and temporary modifier.
 
+During formation engagement, nearby soldiers may enter a visual-only local melee mode. Formation refreshes local targets every 0.25 seconds, limits normal target sharing to two attackers, and keeps every participant within 2.5 units of its assigned slot. Soldiers outside the contact area remain in formation. Soldier attack motion does not calculate damage; CombatResolver continues to use living soldiers physically within melee range as active combatants. `G` toggles local-melee target and slot debug lines.
+
 The enemy uses deterministic direct pursuit and faces the player until engagement. `F` toggles it stationary for controlled flank/rear tests. The player can continue issuing movement and facing orders while engaged. Combat stops and both formations disengage once their centers move outside engagement range. A battle ends at zero living soldiers, showing Victory or Defeat and stopping combat ticks.
 
 ## Camera and control

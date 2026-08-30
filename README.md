@@ -25,6 +25,7 @@ Godot 4.7.2 is installed locally. Restart Codex so it reloads the MCP configurat
 - **Right-click drag**: choose its destination (where the drag starts) and facing (from start toward release). A cyan preview appears before release.
 - **Escape**: cancel a pending right-click drag.
 - **F**: toggle enemy chase. The enemy chases by default; turn it stationary to set up flank and rear tests.
+- **G**: toggle local-melee debug lines for active soldiers and their formation slots.
 - **R**: restart the battle scene.
 
 ## Combat testing
@@ -36,6 +37,8 @@ The player formation starts blue; the enemy Spearmen formation starts red and ap
 - **Rear**: with the enemy stationary, move behind it and face toward its rear. The enemy receives 1.6× damage.
 
 Each formation shows a world-space health bar and survivor count. Floating damage numbers appear at the contact line; debug builds include their directional modifier. Select the blue formation to view its alive count, combat state, and current incoming direction. Casualties fall on the side nearest the attacking formation, then survivors close the gap. `VICTORY` or `DEFEAT` ends combat when one formation reaches zero soldiers.
+
+During engagement, only nearby soldiers can temporarily leave their exact slots to face and visually strike a nearby enemy. Their movement stays tethered to their assigned formation slot, while CombatResolver remains the authority for all damage and casualties.
 
 ## Current architecture
 

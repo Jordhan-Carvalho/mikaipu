@@ -36,4 +36,4 @@ func _process(_delta: float) -> void:
 	if not player_formation.selected:
 		_status_label.text = "Left click the player formation to inspect it.\nEnemy chase: %s (F to toggle)\nR to restart." % ("ON" if combat_resolver.get("enemy_chase_enabled") else "STATIONARY")
 		return
-	_status_label.text = "%s\n%d / %d\nState: %s\nReceiving: %s ATTACK\nEnemy chase: %s (F to toggle)\nR to restart." % [player_formation.unit_name, player_formation.get_alive_count(), player_formation.get_max_count(), player_formation.get_state_name(), player_formation.receiving_direction, "ON" if combat_resolver.get("enemy_chase_enabled") else "STATIONARY"]
+	_status_label.text = "%s\n%d / %d\nState: %s\nLocal melee: %d\nReceiving: %s ATTACK\nEnemy chase: %s (F to toggle)\nG local-melee debug\nR to restart." % [player_formation.unit_name, player_formation.get_alive_count(), player_formation.get_max_count(), player_formation.get_state_name(), player_formation.get_local_melee_count(), player_formation.receiving_direction, "ON" if combat_resolver.get("enemy_chase_enabled") else "STATIONARY"]

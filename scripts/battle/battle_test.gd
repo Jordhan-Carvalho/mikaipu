@@ -35,6 +35,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_F:
 			combat_resolver.call("toggle_enemy_chase")
 			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_G:
+			var debug_enabled := not player_formation.local_melee_debug_enabled
+			player_formation.set_local_melee_debug(debug_enabled)
+			enemy_formation.set_local_melee_debug(debug_enabled)
+			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_R:
 			get_tree().reload_current_scene()
 			get_viewport().set_input_as_handled()
