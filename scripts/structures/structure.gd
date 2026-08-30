@@ -185,12 +185,13 @@ func blocks_segment(from: Vector3, to: Vector3, padding := 1.0) -> Dictionary:
 func get_health_ratio() -> float:
 	return current_health / max_health if max_health > 0.0 else 0.0
 
-func receive_target_damage(amount: float, source_position: Vector3, _damage_kind := "DIRECT") -> float:
+func receive_target_damage(amount: float, source: Variant, _damage_kind := "DIRECT") -> float:
 	if destroyed:
 		return 0.0
 	var applied := minf(current_health, maxf(0.0, amount))
 	current_health -= applied
 	if applied > 0.0:
+		var source_position: Vector3 = source.global_position if source is Node3D else source if source is Vector3 else global_position
 		damage_received.emit(applied, source_position)
 	if current_health <= 0.0:
 		_destroy()

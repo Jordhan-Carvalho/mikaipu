@@ -203,7 +203,8 @@ func get_impact_points(count: int) -> Array[Vector3]:
 		points.append(global_position + Vector3(randf_range(-0.45, 0.45), 0.9, randf_range(-0.45, 0.45)))
 	return points
 
-func receive_target_damage(amount: float, source_position: Vector3, _damage_kind := "DIRECT") -> float:
+func receive_target_damage(amount: float, source: Variant, _damage_kind := "DIRECT") -> float:
+	var source_position: Vector3 = source.global_position if source is Node3D else source if source is Vector3 else global_position
 	return receive_damage(amount, source_position)
 
 func activate_battle_roar() -> bool:
@@ -330,9 +331,16 @@ func _try_attack() -> void:
 	if _attack_cooldown_remaining > 0.0 or attack_target == null:
 		return
 	_attack_cooldown_remaining = attack_cooldown_seconds
-	var applied: float = attack_target.call("receive_target_damage", attack_damage, global_position, "WARLORD")
+	var victim: Node = attack_target
+	if attack_target is Formation:
+		var soldiers: Array[Soldier] = attack_target.get_living_soldiers()
+		if soldiers.is_empty(): return
+		soldiers.sort_custom(func(first: Soldier, second: Soldier) -> bool: return first.global_position.distance_squared_to(global_position) < second.global_position.distance_squared_to(global_position))
+		victim = soldiers.front()
+		if victim.global_position.distance_to(global_position) > attack_range + 0.25: return
+	var applied: float = victim.call("receive_target_damage", attack_damage, self, "WARLORD")
 	if applied > 0.0:
-		target_damage.emit(attack_target, applied, attack_target.call("get_target_position"))
+		target_damage.emit(victim, applied, victim.call("get_target_position"))
 
 func _update_command_aura() -> void:
 	for formation in _allied_formations:

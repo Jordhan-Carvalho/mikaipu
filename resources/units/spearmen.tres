@@ -10,4 +10,7 @@ movement_speed = 7.0
 spacing = 1.4
 melee_attack_per_second = 5.0
 melee_range = 1.75
+soldier_max_hp = 100.0
+melee_attack_damage = 6.0
+melee_attack_cooldown_seconds = 1.2
 placeholder_color = Color(0.32, 0.65, 0.95, 1)

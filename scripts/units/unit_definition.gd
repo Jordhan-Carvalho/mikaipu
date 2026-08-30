@@ -7,8 +7,12 @@ enum UnitType { SPEARMEN, CAVALRY, ARCHERS }
 @export var display_name := "Spearmen"
 @export var movement_speed := 7.0
 @export var spacing := 1.4
-@export var melee_attack_per_second := 5.0
+@export var melee_attack_per_second := 5.0 # Legacy display/reference value.
 @export var melee_range := 1.75
+@export_category("Individual Soldier Combat")
+@export var soldier_max_hp := 100.0
+@export var melee_attack_damage := 6.0
+@export var melee_attack_cooldown_seconds := 1.2
 @export var placeholder_color := Color("#d5bc70")
 @export var placeholder_scale := Vector3.ONE
 

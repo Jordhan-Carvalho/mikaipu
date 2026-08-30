@@ -1,6 +1,9 @@
 class_name Formation
 extends DamageableTarget
 
+signal soldier_damage_applied(soldier: Soldier, amount: float, source: Node, damage_kind: String)
+signal member_died(soldier: Soldier, source: Node, damage_kind: String)
+
 const SOLDIER_SCENE := preload("res://scenes/units/soldier.tscn")
 const FORMATION_STATUS_DISPLAY_SCRIPT := preload("res://scripts/battle/formation_status_display.gd")
 const BREACH_TRANSIT_COLUMNS := 2
@@ -23,7 +26,6 @@ enum StructureAttackState { NONE, APPROACHING, ATTACKING }
 @export var initial_center := Vector3(0.0, 0.0, 3.0)
 @export var initial_facing := Vector3(0.0, 0.0, -1.0)
 @export var soldier_color := Color("#d5bc70")
-@export var health_per_soldier := 100.0
 @export var melee_range := 1.75
 @export var local_melee_acquisition_range := 6.5
 @export var local_melee_distance := 0.85
@@ -46,8 +48,6 @@ var structure_target: Structure
 var explicit_attack_target: Node
 var auto_attack_target: Node
 var receiving_direction := "NONE"
-var max_health := 0.0
-var current_health := 0.0
 var _preview_active := false
 var _preview_destination := Vector3.ZERO
 var _preview_facing := Vector3.FORWARD
@@ -92,8 +92,6 @@ func _ready() -> void:
 	destination = _flat(initial_center)
 	facing = _safe_facing(initial_facing, Vector3.FORWARD)
 	desired_facing = facing
-	max_health = float(soldier_count) * health_per_soldier
-	current_health = max_health
 	for slot in _calculate_slots(destination, facing):
 		var soldier := SOLDIER_SCENE.instantiate() as Soldier
 		soldier.movement_speed = soldier_speed
@@ -101,9 +99,12 @@ func _ready() -> void:
 		soldier.global_position = slot
 		soldier.set_placeholder_color(soldier_color)
 		soldier.set_placeholder_scale(_get_placeholder_scale())
+		soldier.configure_combat(self, unit_definition)
 		soldier.configure_local_melee(local_melee_acquisition_range, local_melee_distance, local_melee_max_deviation, local_visual_attack_interval)
 		soldier.set_movement_blockers(_movement_blockers)
 		soldier.set_desired_slot(slot, facing)
+		soldier.damage_received.connect(_on_soldier_damage_received)
+		soldier.soldier_died.connect(_on_soldier_died)
 		soldiers.append(soldier)
 	_create_status_display()
 	_create_interaction_hitbox()
@@ -216,6 +217,8 @@ func clear_order_preview() -> void:
 
 func set_selected(value: bool) -> void:
 	selected = value
+	for soldier in soldiers:
+		soldier.set_formation_selected(value)
 	if not selected:
 		_preview_active = false
 	_rebuild_debug_mesh()
@@ -244,7 +247,7 @@ func get_row_count(slot_count: int = -1) -> int:
 func get_living_soldiers() -> Array[Soldier]:
 	var living: Array[Soldier] = []
 	for soldier in soldiers:
-		if soldier.is_alive:
+		if soldier.is_alive():
 			living.append(soldier)
 	return living
 
@@ -312,9 +315,14 @@ func set_local_melee_debug(value: bool) -> void:
 	_rebuild_debug_mesh()
 
 func get_health_ratio() -> float:
-	if max_health <= 0.0:
-		return 0.0
-	return current_health / max_health
+	var living := get_living_soldiers()
+	if living.is_empty(): return 0.0
+	var current := 0.0
+	var maximum := 0.0
+	for soldier in living:
+		current += soldier.current_hp
+		maximum += soldier.max_hp
+	return current / maximum if maximum > 0.0 else 0.0
 
 func is_cavalry() -> bool:
 	return unit_definition != null and unit_definition.unit_type == UnitDefinition.UnitType.CAVALRY
@@ -337,6 +345,12 @@ func set_battle_roar_multiplier(value: float) -> void:
 func get_outgoing_damage_multiplier() -> float:
 	return command_aura_multiplier * battle_roar_multiplier
 
+func calculate_individual_damage(attacker: Soldier, target: Node, base_damage: float, damage_kind: String) -> float:
+	var resolver := get_tree().get_first_node_in_group("combat_resolver") as CombatResolver
+	if resolver != null:
+		return resolver.calculate_individual_damage(attacker, target, base_damage, damage_kind)
+	return base_damage * get_outgoing_damage_multiplier()
+
 func is_target_alive() -> bool:
 	return combat_state != CombatState.DEFEATED
 
@@ -353,9 +367,7 @@ func get_targeting_radius() -> float:
 	return Vector2(width, depth).length() * 0.5
 
 func receive_target_damage(amount: float, source_position: Vector3, damage_kind := "DIRECT") -> float:
-	if damage_kind == "RANGED":
-		return receive_ranged_damage(amount, source_position, source_position)
-	return receive_damage(amount, damage_kind, source_position)
+	return _distribute_legacy_damage(amount, source_position, damage_kind)
 
 func set_movement_blockers(blockers: Array) -> void:
 	# Compatibility during migration. Navigation owns static obstacle blocking.
@@ -598,28 +610,32 @@ func get_state_name() -> String:
 	return "UNKNOWN"
 
 func receive_damage(amount: float, incoming_direction: String, attacker_position: Vector3) -> float:
-	return _receive_damage(amount, incoming_direction, attacker_position, Vector3.INF)
+	receiving_direction = incoming_direction
+	return _distribute_legacy_damage(amount, attacker_position, incoming_direction)
 
 func receive_ranged_damage(amount: float, impact_position: Vector3, attacker_position: Vector3) -> float:
-	return _receive_damage(amount, "RANGED", attacker_position, impact_position)
+	receiving_direction = "RANGED"
+	return _distribute_legacy_damage(amount, impact_position, "RANGED")
 
-func _receive_damage(amount: float, incoming_direction: String, attacker_position: Vector3, impact_position: Vector3) -> float:
-	if combat_state == CombatState.DEFEATED:
-		return 0.0
-	var previous_health := current_health
-	current_health = maxf(0.0, current_health - amount)
-	var applied_damage := previous_health - current_health
-	if applied_damage <= 0.0:
-		return 0.0
-	receiving_direction = incoming_direction
-	var expected_alive := ceili(current_health / health_per_soldier)
-	var casualties := maxi(0, get_alive_count() - expected_alive)
-	for casualty_index in range(casualties):
-		var living := get_living_soldiers()
-		if living.is_empty():
-			break
-		var casualty := _find_ranged_casualty(living, impact_position) if impact_position.is_finite() else _find_closest_soldier(living, attacker_position)
-		casualty.die()
+func _distribute_legacy_damage(amount: float, impact_position: Vector3, damage_kind: String) -> float:
+	# Transitional adapter for tower/Warlord callers that have not yet selected an
+	# individual Soldier. HP still always lives on Soldiers.
+	var remaining := maxf(0.0, amount)
+	var applied := 0.0
+	var living := get_living_soldiers()
+	living.sort_custom(func(first: Soldier, second: Soldier) -> bool: return first.global_position.distance_squared_to(impact_position) < second.global_position.distance_squared_to(impact_position))
+	for soldier in living:
+		if remaining <= 0.0: break
+		var hit := soldier.take_damage(remaining, null, damage_kind)
+		applied += hit
+		remaining -= hit
+	return applied
+
+func _on_soldier_damage_received(soldier: Soldier, amount: float, source: Node, damage_kind: String) -> void:
+	soldier_damage_applied.emit(soldier, amount, source, damage_kind)
+
+func _on_soldier_died(soldier: Soldier, source: Node, damage_kind: String) -> void:
+	member_died.emit(soldier, source, damage_kind)
 	if get_structure_target() != null and not is_archer():
 		_rebuild_structure_attack_plan(get_structure_target())
 	else:
@@ -630,7 +646,6 @@ func _receive_damage(amount: float, incoming_direction: String, attacker_positio
 		explicit_attack_target = null
 		_clear_local_melee_targets()
 		_cancel_active_ability()
-	return applied_damage
 
 func _apply_unit_definition() -> void:
 	if unit_definition == null:
@@ -757,7 +772,7 @@ func _clear_structure_attack_plan() -> void:
 	if structure_target != null and is_instance_valid(structure_target):
 		structure_target.release_melee_contacts(get_instance_id())
 	for soldier in soldiers:
-		if soldier.is_alive:
+		if soldier.is_alive():
 			soldier.clear_structure_contact_assignment()
 	_structure_contact_assignments.clear()
 	_structure_staging_slots.clear()
@@ -908,7 +923,7 @@ func _get_first_blocker(from: Vector3, to: Vector3) -> Structure:
 
 func _set_soldier_speed_multiplier(multiplier: float) -> void:
 	for soldier in soldiers:
-		if soldier.is_alive:
+		if soldier.is_alive():
 			soldier.movement_speed = soldier_speed * multiplier
 
 func _is_effectively_stationary() -> bool:
@@ -1018,10 +1033,30 @@ func _sync_interaction_hitbox() -> void:
 		_interaction_area.global_position = get_current_center()
 
 func _can_run_local_melee() -> bool:
-	return not _breach_transit_active and combat_target != null and is_instance_valid(combat_target) and combat_target.combat_state != CombatState.DEFEATED and get_alive_count() > 0
+	if _breach_transit_active or get_alive_count() == 0:
+		return false
+	var target := _get_local_combat_target()
+	if target == null or not is_instance_valid(target):
+		return false
+	return target is Formation and target.combat_state != CombatState.DEFEATED or target.has_method("is_target_alive") and target.call("is_target_alive")
+
+func _get_local_combat_target() -> Node:
+	var explicit := get_explicit_attack_target()
+	if explicit != null and not (explicit is Structure):
+		return explicit
+	if auto_attack_target != null and is_instance_valid(auto_attack_target) and not (auto_attack_target is Structure):
+		return auto_attack_target
+	return combat_target
 
 func _assign_local_melee_targets() -> void:
-	var enemies: Array[Soldier] = combat_target.get_living_soldiers()
+	var tactical_target := _get_local_combat_target()
+	if tactical_target != null and not (tactical_target is Formation):
+		_assign_warlord_local_targets(tactical_target)
+		return
+	if not (tactical_target is Formation):
+		_clear_local_melee_targets()
+		return
+	var enemies: Array[Soldier] = tactical_target.get_living_soldiers()
 	if enemies.is_empty():
 		_clear_local_melee_targets()
 		return
@@ -1041,6 +1076,15 @@ func _assign_local_melee_targets() -> void:
 		soldier.enter_local_melee(target)
 		var target_id := target.get_instance_id()
 		claims[target_id] = int(claims.get(target_id, 0)) + 1
+
+func _assign_warlord_local_targets(target: Node) -> void:
+	for soldier in get_living_soldiers():
+		if soldier.is_in_local_melee() and soldier.local_target == target:
+			continue
+		if soldier.global_position.distance_to(target.call("get_target_position")) <= local_melee_acquisition_range and soldier.global_position.distance_to(soldier.desired_slot) <= local_melee_max_deviation + 0.35:
+			soldier.enter_local_melee(target)
+		else:
+			soldier.clear_local_melee()
 
 func _has_valid_local_target(soldier: Soldier, enemies: Array[Soldier]) -> bool:
 	if not soldier.is_in_local_melee() or not enemies.has(soldier.local_target):
@@ -1074,7 +1118,7 @@ func _find_best_local_target(soldier: Soldier, enemies: Array[Soldier], claims: 
 
 func _clear_local_melee_targets() -> void:
 	for soldier in soldiers:
-		if soldier.is_alive and soldier.movement_mode == Soldier.MovementMode.LOCAL_MELEE:
+		if soldier.is_alive() and soldier.movement_mode == Soldier.MovementMode.LOCAL_MELEE:
 			soldier.clear_local_melee()
 
 func _rebuild_debug_mesh() -> void:
