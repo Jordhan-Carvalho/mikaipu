@@ -36,7 +36,7 @@ var _battle_roar_remaining := 0.0
 var _battle_roar_cooldown_remaining := 0.0
 var _allied_formations: Array[Formation] = []
 var _roar_recipients: Array[Formation] = []
-var _movement_blockers: Array[Structure] = []
+var _movement_blockers: Array[Structure] = [] # Deprecated compatibility data.
 var _body: MeshInstance3D
 var _body_material: StandardMaterial3D
 var _selection_marker: MeshInstance3D
@@ -50,6 +50,10 @@ var auto_attack_enabled := false
 var auto_attack_suppression_remaining := 0.0
 var command_name := "NONE"
 var _interaction_area: Area3D
+var _navigation_agent: NavigationAgent3D
+var _navigation_target := Vector3.INF
+var _structure_contact_target: Structure
+var _structure_contact_position := Vector3.INF
 
 func _ready() -> void:
 	current_health = max_health
@@ -58,6 +62,7 @@ func _ready() -> void:
 	_create_status_display()
 	_create_interaction_hitbox()
 	_create_debug_mesh()
+	_create_navigation_agent()
 	_refresh_visuals()
 
 func configure_allied_formations(formations: Array) -> void:
@@ -86,23 +91,21 @@ func _physics_process(delta: float) -> void:
 	var target_position := destination
 	if state == State.ATTACKING and attack_target != null:
 		if attack_target is Structure:
-			target_position = attack_target.get_attack_position(global_position, attack_range)
+			if _structure_contact_target != attack_target or not _structure_contact_position.is_finite():
+				_assign_structure_contact(attack_target)
+			target_position = _structure_contact_position
 		else:
 			target_position = attack_target.call("get_target_position")
 	var flat_offset := _flat(target_position - global_position)
-	if state == State.ATTACKING and attack_target != null and flat_offset.length() <= attack_range:
+	var is_structure_contact := attack_target is Structure and _structure_contact_position.is_finite() and global_position.distance_to(_structure_contact_position) <= 0.55 and (attack_target as Structure).get_distance_to_footprint(global_position) <= attack_range + 0.10
+	if state == State.ATTACKING and attack_target != null and (is_structure_contact or (not (attack_target is Structure) and flat_offset.length() <= attack_range)):
 		_face_direction(flat_offset)
 		_try_attack()
 		return
-	if flat_offset.length() <= 0.05:
-		global_position = Vector3(target_position.x, global_position.y, target_position.z)
-		if state == State.MOVING:
-			state = State.IDLE
-		return
-	var move_distance := minf(movement_speed * delta, flat_offset.length())
-	var requested_position := global_position + flat_offset.normalized() * move_distance
-	global_position = _clamp_to_barricade(global_position, requested_position)
-	_face_direction(flat_offset)
+	_set_navigation_target(target_position)
+	_move_with_navigation(delta, flat_offset)
+	if state == State.MOVING and _navigation_agent != null and _navigation_agent.is_navigation_finished():
+		state = State.IDLE
 
 func set_selected(value: bool) -> void:
 	selected = value
@@ -115,6 +118,7 @@ func contains_ground_point(point: Vector3) -> bool:
 func issue_move(world_position: Vector3) -> void:
 	if state == State.DEAD or not battle_active:
 		return
+	_clear_structure_contact()
 	attack_target = null
 	explicit_attack_target = null
 	auto_attack_target = null
@@ -124,14 +128,14 @@ func issue_move(world_position: Vector3) -> void:
 
 func set_movement_blockers(blockers: Array) -> void:
 	_movement_blockers.clear()
-	for blocker in blockers:
-		if blocker is Structure:
-			_movement_blockers.append(blocker)
 
 func set_attack_target(target: Node) -> bool:
 	if state == State.DEAD or not battle_active or target == null or int(target.get("team_id")) == team_id or not target.call("is_target_alive"):
 		return false
+	_clear_structure_contact()
 	attack_target = target
+	if target is Structure:
+		_assign_structure_contact(target)
 	explicit_attack_target = target
 	auto_attack_target = null
 	state = State.ATTACKING
@@ -153,6 +157,7 @@ func can_auto_attack() -> bool:
 func stop() -> void:
 	if state == State.DEAD:
 		return
+	_clear_structure_contact()
 	attack_target = null
 	explicit_attack_target = null
 	auto_attack_target = null
@@ -247,6 +252,7 @@ func set_battle_active(value: bool) -> void:
 	battle_active = value
 	if not battle_active and state != State.DEAD:
 		attack_target = null
+		_clear_structure_contact()
 		explicit_attack_target = null
 		auto_attack_target = null
 		state = State.IDLE
@@ -254,8 +260,9 @@ func set_battle_active(value: bool) -> void:
 func _update_attack_target() -> void:
 	if attack_target == null:
 		return
-	if not is_instance_valid(attack_target) or not attack_target.call("is_target_alive") or global_position.distance_to(attack_target.call("get_target_position")) > attack_follow_leash:
+	if not is_instance_valid(attack_target) or not attack_target.call("is_target_alive") or (not (attack_target is Structure) and global_position.distance_to(attack_target.call("get_target_position")) > attack_follow_leash):
 		var was_explicit := attack_target == explicit_attack_target
+		_clear_structure_contact()
 		attack_target = null
 		explicit_attack_target = null if was_explicit else explicit_attack_target
 		auto_attack_target = null if not was_explicit else auto_attack_target
@@ -263,21 +270,61 @@ func _update_attack_target() -> void:
 		if was_explicit and command_name == "ATTACK":
 			command_name = "NONE"
 
-func _clamp_to_barricade(from: Vector3, requested: Vector3) -> Vector3:
-	var nearest_point := requested
-	var nearest_distance := INF
-	for blocker in _movement_blockers:
-		if not is_instance_valid(blocker) or not blocker.is_target_alive():
+func _create_navigation_agent() -> void:
+	_navigation_agent = NavigationAgent3D.new()
+	_navigation_agent.name = "NavigationAgent3D"
+	_navigation_agent.path_desired_distance = 0.35
+	_navigation_agent.target_desired_distance = 0.45
+	_navigation_agent.path_max_distance = 1.5
+	_navigation_agent.radius = 0.48
+	_navigation_agent.height = 2.1
+	_navigation_agent.avoidance_enabled = false
+	add_child(_navigation_agent)
+
+func _assign_structure_contact(target: Structure) -> void:
+	_clear_structure_contact()
+	if target == null or not target.is_target_alive():
+		return
+	var navigation := get_tree().get_first_node_in_group("battle_navigation") as BattleNavigation
+	var clearance := navigation.get_contact_clearance() if navigation != null else 0.55
+	var face := target.get_attack_face(global_position)
+	for candidate in target.get_melee_contact_candidates(face, 1.1, attack_range, clearance):
+		var raw: Vector3 = candidate.get("position", Vector3.INF) as Vector3
+		var projected := navigation.project_contact_point(raw) if navigation != null else raw
+		if not projected.is_finite():
 			continue
-		var hit := blocker.blocks_segment(from, requested, barricade_padding)
-		if hit.is_empty():
-			continue
-		var point: Vector3 = hit.get("point", requested) as Vector3
-		var distance := from.distance_squared_to(point)
-		if distance < nearest_distance:
-			nearest_distance = distance
-			nearest_point = point
-	return nearest_point
+		candidate["position"] = projected
+		if target.reserve_melee_contact(get_instance_id(), get_instance_id(), candidate):
+			_structure_contact_target = target
+			_structure_contact_position = projected
+			return
+
+func _clear_structure_contact() -> void:
+	if _structure_contact_target != null and is_instance_valid(_structure_contact_target):
+		_structure_contact_target.release_melee_contacts(get_instance_id())
+	_structure_contact_target = null
+	_structure_contact_position = Vector3.INF
+
+func _set_navigation_target(target: Vector3) -> void:
+	if _navigation_agent == null:
+		return
+	var flat_target := Vector3(target.x, global_position.y, target.z)
+	if _navigation_target.is_finite() and _navigation_target.distance_to(flat_target) < 0.3:
+		return
+	_navigation_target = flat_target
+	_navigation_agent.target_position = flat_target
+
+func _move_with_navigation(delta: float, fallback_direction: Vector3) -> void:
+	if _navigation_agent == null or NavigationServer3D.map_get_iteration_id(_navigation_agent.get_navigation_map()) == 0:
+		return
+	var movement_direction := Vector3.ZERO
+	if not _navigation_agent.is_navigation_finished():
+		movement_direction = _flat(_navigation_agent.get_next_path_position() - global_position)
+	if movement_direction.length_squared() > 0.0001:
+		global_position += movement_direction.normalized() * minf(movement_speed * delta, movement_direction.length())
+		_face_direction(movement_direction)
+	elif fallback_direction.length_squared() > 0.0001:
+		_face_direction(fallback_direction)
 
 func _try_attack() -> void:
 	if _attack_cooldown_remaining > 0.0 or attack_target == null:
@@ -307,6 +354,7 @@ func _clear_battle_roar() -> void:
 
 func _die() -> void:
 	state = State.DEAD
+	_clear_structure_contact()
 	attack_target = null
 	explicit_attack_target = null
 	auto_attack_target = null

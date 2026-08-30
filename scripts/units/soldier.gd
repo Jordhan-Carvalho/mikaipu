@@ -4,8 +4,10 @@ extends Node3D
 enum MovementMode { FORMATION, LOCAL_MELEE }
 
 @export var movement_speed := 7.0
-@export var stop_distance := 0.04
+@export var stop_distance := 0.12
 @export var placeholder_color := Color("#d5bc70")
+@export var navigation_target_update_distance := 0.3
+
 var desired_slot := Vector3.ZERO
 var is_alive := true
 var movement_mode := MovementMode.FORMATION
@@ -14,12 +16,17 @@ var local_acquisition_range := 3.0
 var desired_melee_distance := 0.85
 var maximum_slot_deviation := 2.5
 var visual_attack_interval := 0.8
-var barricade_padding := 0.35
-var _movement_blockers: Array[Structure] = []
 var _attack_cooldown := 0.0
 var _body_material: StandardMaterial3D
 var _body: MeshInstance3D
 var _attack_tween: Tween
+var _navigation_agent: NavigationAgent3D
+var _navigation_target := Vector3.INF
+var _navigation_debug := false
+var _navigation_query_ready := false
+var structure_contact_target: Structure
+var structure_contact_position := Vector3.INF
+var structure_contact_id := ""
 
 func _ready() -> void:
 	_body = MeshInstance3D.new()
@@ -32,13 +39,25 @@ func _ready() -> void:
 	_body.mesh = capsule
 	_body.position.y = 0.625
 	add_child(_body)
+	_navigation_agent = NavigationAgent3D.new()
+	_navigation_agent.name = "NavigationAgent3D"
+	_navigation_agent.path_desired_distance = 0.35
+	_navigation_agent.target_desired_distance = 0.45
+	_navigation_agent.path_max_distance = 1.5
+	_navigation_agent.radius = 0.32
+	_navigation_agent.height = 1.4
+	_navigation_agent.avoidance_enabled = false
+	_navigation_agent.debug_enabled = _navigation_debug
+	add_child(_navigation_agent)
 	set_placeholder_color(placeholder_color)
 	desired_slot = global_position
 
-func set_desired_slot(world_position: Vector3, formation_facing: Vector3) -> void:
+func set_desired_slot(world_position: Vector3, _formation_facing: Vector3) -> void:
 	if not is_alive:
 		return
 	desired_slot = world_position
+	if movement_mode == MovementMode.FORMATION:
+		_set_navigation_target(desired_slot)
 
 func configure_local_melee(acquisition_range: float, melee_distance: float, max_deviation: float, attack_interval: float) -> void:
 	local_acquisition_range = acquisition_range
@@ -46,11 +65,14 @@ func configure_local_melee(acquisition_range: float, melee_distance: float, max_
 	maximum_slot_deviation = max_deviation
 	visual_attack_interval = attack_interval
 
-func set_movement_blockers(blockers: Array) -> void:
-	_movement_blockers.clear()
-	for blocker in blockers:
-		if blocker is Structure:
-			_movement_blockers.append(blocker)
+## Compatibility shim: blockers are now represented only by the NavMesh.
+func set_movement_blockers(_blockers: Array) -> void:
+	pass
+
+func set_navigation_debug(value: bool) -> void:
+	_navigation_debug = value
+	if _navigation_agent != null:
+		_navigation_agent.debug_enabled = value
 
 func enter_local_melee(target: Soldier) -> void:
 	if not is_alive or target == null or not target.is_alive:
@@ -63,12 +85,38 @@ func clear_local_melee() -> void:
 	movement_mode = MovementMode.FORMATION
 	_attack_cooldown = 0.0
 	_reset_attack_visual()
+	_set_navigation_target(desired_slot, true)
 
 func is_in_local_melee() -> bool:
 	return movement_mode == MovementMode.LOCAL_MELEE and _has_valid_local_target()
 
 func get_mode_name() -> String:
 	return "LOCAL_MELEE" if is_in_local_melee() else "FORMATION"
+
+func is_near_desired_slot(distance: float = -1.0) -> bool:
+	var threshold := maxf(stop_distance, distance) if distance >= 0.0 else stop_distance
+	return global_position.distance_to(desired_slot) <= threshold
+
+func get_navigation_target() -> Vector3:
+	return _navigation_target
+
+func set_structure_contact_assignment(target: Structure, contact_id: String, contact_position: Vector3) -> void:
+	structure_contact_target = target
+	structure_contact_id = contact_id
+	structure_contact_position = contact_position
+
+func clear_structure_contact_assignment() -> void:
+	structure_contact_target = null
+	structure_contact_id = ""
+	structure_contact_position = Vector3.INF
+
+func is_active_structure_attacker(target: Structure, melee_range: float, contact_tolerance := 0.55) -> bool:
+	return is_alive and structure_contact_target == target and structure_contact_position.is_finite() and global_position.distance_to(structure_contact_position) <= contact_tolerance and target.get_distance_to_footprint(global_position) <= melee_range + 0.10
+
+func is_navigation_target_reachable() -> bool:
+	if _navigation_agent == null or not _navigation_query_ready:
+		return true
+	return _navigation_agent.is_target_reachable()
 
 func set_placeholder_color(color: Color) -> void:
 	placeholder_color = color
@@ -78,13 +126,18 @@ func set_placeholder_color(color: Color) -> void:
 func set_placeholder_scale(value: Vector3) -> void:
 	if _body != null:
 		_body.scale = value
+	if _navigation_agent != null:
+		_navigation_agent.radius = 0.48 if value.x > 1.15 else 0.32
 
 func die() -> void:
 	if not is_alive:
 		return
 	is_alive = false
 	clear_local_melee()
+	clear_structure_contact_assignment()
 	desired_slot = global_position
+	if _navigation_agent != null:
+		_navigation_agent.set_physics_process(false)
 	if _body_material != null:
 		_body_material.albedo_color = Color("#5a1f1f")
 	var fall_tween := create_tween()
@@ -94,7 +147,7 @@ func _physics_process(delta: float) -> void:
 	if not is_alive:
 		return
 	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
-	var target_position := Vector3(desired_slot.x, global_position.y, desired_slot.z)
+	var target_position := desired_slot
 	var target_to_face := Vector3.ZERO
 	if movement_mode == MovementMode.LOCAL_MELEE:
 		if _should_leave_local_melee():
@@ -105,36 +158,38 @@ func _physics_process(delta: float) -> void:
 			var from_slot := _flat(approach_position - desired_slot)
 			if from_slot.length() > maximum_slot_deviation:
 				approach_position = desired_slot + from_slot.normalized() * maximum_slot_deviation
-			target_position = Vector3(approach_position.x, global_position.y, approach_position.z)
+			target_position = approach_position
 			target_to_face = local_target.global_position - global_position
 			if global_position.distance_to(desired_slot) <= maximum_slot_deviation + 0.25 and global_position.distance_to(local_target.global_position) <= desired_melee_distance + 0.22:
 				_play_attack_visual()
-	var offset := target_position - global_position
-	if offset.length() <= stop_distance:
-		global_position = target_position
-		if target_to_face.length_squared() > 0.0001:
-			look_at(global_position + _flat_direction(target_to_face), Vector3.UP, true)
-		return
-	var next_position := global_position + offset.normalized() * minf(movement_speed * delta, offset.length())
-	global_position = _clamp_to_barricade(global_position, next_position)
-	var facing_direction := target_to_face if target_to_face.length_squared() > 0.0001 else offset
-	look_at(global_position + _flat_direction(facing_direction), Vector3.UP, true)
+	_set_navigation_target(target_position)
+	_move_with_navigation(delta, target_to_face)
 
-func _clamp_to_barricade(from: Vector3, requested: Vector3) -> Vector3:
-	var nearest_point := requested
-	var nearest_distance := INF
-	for blocker in _movement_blockers:
-		if not is_instance_valid(blocker) or not blocker.is_target_alive():
-			continue
-		var hit := blocker.blocks_segment(from, requested, barricade_padding)
-		if hit.is_empty():
-			continue
-		var point: Vector3 = hit.get("point", requested) as Vector3
-		var distance := from.distance_squared_to(point)
-		if distance < nearest_distance:
-			nearest_point = Vector3(point.x, global_position.y, point.z)
-			nearest_distance = distance
-	return nearest_point
+func _set_navigation_target(target: Vector3, force := false) -> void:
+	if _navigation_agent == null:
+		return
+	var flat_target := Vector3(target.x, global_position.y, target.z)
+	if not force and _navigation_target.is_finite() and _navigation_target.distance_to(flat_target) < navigation_target_update_distance:
+		return
+	_navigation_target = flat_target
+	_navigation_agent.target_position = flat_target
+	_navigation_query_ready = false
+
+func _move_with_navigation(delta: float, target_to_face: Vector3) -> void:
+	if _navigation_agent == null:
+		return
+	if NavigationServer3D.map_get_iteration_id(_navigation_agent.get_navigation_map()) == 0:
+		return
+	_navigation_query_ready = true
+	var move_direction := Vector3.ZERO
+	if not _navigation_agent.is_navigation_finished():
+		var next_position := _navigation_agent.get_next_path_position()
+		move_direction = _flat(next_position - global_position)
+	if move_direction.length_squared() > 0.0001:
+		global_position += move_direction.normalized() * minf(movement_speed * delta, move_direction.length())
+	var facing_direction := target_to_face if target_to_face.length_squared() > 0.0001 else move_direction
+	if facing_direction.length_squared() > 0.0001:
+		look_at(global_position + _flat_direction(facing_direction), Vector3.UP, true)
 
 func _should_leave_local_melee() -> bool:
 	if not _has_valid_local_target():

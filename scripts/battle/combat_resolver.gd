@@ -173,7 +173,10 @@ func _update_enemy_pursuit() -> void:
 		var target_destination := target.get_current_center()
 		if enemy.combat_target == null:
 			target_destination -= to_target * (engagement_range * 0.75)
-		enemy.issue_order(target_destination, to_target)
+		# Do not continuously reset every member's NavigationAgent target while a
+		# hostile formation drifts by a few centimetres.
+		if enemy.destination.distance_to(target_destination) > 0.5 or enemy.facing.dot(to_target) < 0.995:
+			enemy.issue_order(target_destination, to_target)
 
 func _establish_nearby_engagements() -> void:
 	for first_index in range(formations.size()):
@@ -204,12 +207,7 @@ func _resolve_charge_impacts() -> void:
 		if defender == null or not is_instance_valid(defender) or defender.combat_state == Formation.CombatState.DEFEATED:
 			charger.consume_charge()
 			continue
-		var blocker := charger.get_charge_blocker()
-		if blocker != null and charger.get_current_center().distance_to(blocker.get_target_position()) <= engagement_range:
-			if blocker is Barricade and charger.is_charge_valid():
-				var applied_blocker := blocker.receive_target_damage(barricade_charge_damage * charger.get_outgoing_damage_multiplier(), charger.get_current_center(), "CHARGE")
-				if applied_blocker > 0.0:
-					damage_dealt.emit(blocker.get_target_position(), applied_blocker, "STRUCTURE", 1.0, "BARRICADE IMPACT")
+		if not charger.has_reachable_navigation():
 			charger.consume_charge()
 			continue
 		if charger.get_current_center().distance_to(defender.get_current_center()) > engagement_range:
@@ -297,10 +295,7 @@ func _update_structure_melee_attacks() -> void:
 		var target := attacker.get_structure_target()
 		if target == null:
 			continue
-		var active_count := 0
-		for soldier in attacker.get_living_soldiers():
-			if target.get_distance_to_footprint(soldier.global_position) <= attacker.melee_range:
-				active_count += 1
+		var active_count := attacker.get_active_structure_attacker_count()
 		if active_count == 0:
 			continue
 		var damage := float(active_count) * attacker.get_melee_attack_per_second() * attacker.get_outgoing_damage_multiplier() * combat_tick_seconds

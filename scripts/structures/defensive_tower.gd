@@ -8,7 +8,8 @@ var cooldown_remaining := 0.0
 var last_target_team_id := -1
 
 func _ready() -> void:
-	structure_name = "DEFENSIVE TOWER"
+	if structure_name == "Structure":
+		structure_name = "DEFENSIVE TOWER"
 	super._ready()
 	if _body != null:
 		_body.scale = Vector3(0.7, 1.7, 0.7)

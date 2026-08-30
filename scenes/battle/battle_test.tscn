@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/battle_test.gd" id="1_battle"]
 [ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="2_camera"]
@@ -17,20 +17,31 @@
 [ext_resource type="Script" path="res://scripts/structures/defensive_tower.gd" id="15_tower"]
 [ext_resource type="Script" path="res://scripts/structures/barricade.gd" id="16_barricade"]
 [ext_resource type="Script" path="res://scripts/input/selection_box_overlay.gd" id="17_selection_overlay"]
+[ext_resource type="Script" path="res://scripts/battle/battle_navigation.gd" id="18_navigation"]
 
 [node name="BattleTest" type="Node3D"]
 script = ExtResource("1_battle")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 
+[node name="BattleNavigation" type="Node3D" parent="."]
+script = ExtResource("18_navigation")
+
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation_degrees = Vector3(-55, -25, 0)
 light_energy = 1.1
 shadow_enabled = true
 
-[node name="RTSCamera" type="Camera3D" parent="."]
-current = true
+[node name="CameraRig" type="Node3D" parent="."]
 script = ExtResource("2_camera")
+pivot_path = NodePath("Pivot")
+camera_path = NodePath("Pivot/Camera3D")
+formation_input_path = NodePath("../FormationInput")
+
+[node name="Pivot" type="Node3D" parent="CameraRig"]
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig/Pivot"]
+current = true
 
 [node name="PlayerSpearmen" parent="." instance=ExtResource("3_formation")]
 unit_definition = ExtResource("8_spearmen")
@@ -134,84 +145,87 @@ defender_anchor = Vector3(8, 0, -13)
 
 [node name="EnemyWarlord" type="Node3D" parent="."]
 position = Vector3(0, 0, -24)
-team_id = 1
 script = ExtResource("12_warlord")
+team_id = 1
 
 [node name="CentralKeep" type="Node3D" parent="."]
 position = Vector3(0, 0, -29)
+script = ExtResource("14_keep")
 team_id = 1
+structure_name = "Central Keep"
 max_health = 9000.0
 footprint_size = Vector2(7, 7)
 body_color = Color(0.38, 0.34, 0.3, 1)
-script = ExtResource("14_keep")
 
 [node name="LeftTower" type="Node3D" parent="."]
 position = Vector3(-12, 0, -19)
+script = ExtResource("15_tower")
 team_id = 1
+structure_name = "West Tower"
 max_health = 3000.0
 footprint_size = Vector2(2.4, 2.4)
 body_color = Color(0.48, 0.34, 0.28, 1)
-script = ExtResource("15_tower")
 
 [node name="RightTower" type="Node3D" parent="."]
 position = Vector3(12, 0, -19)
+script = ExtResource("15_tower")
 team_id = 1
+structure_name = "East Tower"
 max_health = 3000.0
 footprint_size = Vector2(2.4, 2.4)
 body_color = Color(0.48, 0.34, 0.28, 1)
-script = ExtResource("15_tower")
 
 [node name="BarricadeLeft" type="Node3D" parent="."]
 position = Vector3(-35, 0, 2)
+script = ExtResource("16_barricade")
 team_id = 1
 max_health = 1800.0
 footprint_size = Vector2(14.0, 1.2)
 body_color = Color(0.36, 0.2, 0.12, 1)
-script = ExtResource("16_barricade")
 
 [node name="BarricadeCenter" type="Node3D" parent="."]
 position = Vector3(-21, 0, 2)
+script = ExtResource("16_barricade")
 team_id = 1
 max_health = 1800.0
 footprint_size = Vector2(14.0, 1.2)
 body_color = Color(0.36, 0.2, 0.12, 1)
-script = ExtResource("16_barricade")
 
 [node name="BarricadeRight" type="Node3D" parent="."]
 position = Vector3(-7, 0, 2)
+script = ExtResource("16_barricade")
 team_id = 1
 max_health = 1800.0
 footprint_size = Vector2(14.0, 1.2)
 body_color = Color(0.36, 0.2, 0.12, 1)
-script = ExtResource("16_barricade")
 
 [node name="BarricadeInnerLeft" type="Node3D" parent="."]
 position = Vector3(7, 0, 2)
+script = ExtResource("16_barricade")
 team_id = 1
 max_health = 1800.0
 footprint_size = Vector2(14.0, 1.2)
 body_color = Color(0.36, 0.2, 0.12, 1)
-script = ExtResource("16_barricade")
 
 [node name="BarricadeFarRight" type="Node3D" parent="."]
 position = Vector3(21, 0, 2)
+script = ExtResource("16_barricade")
 team_id = 1
 max_health = 1800.0
 footprint_size = Vector2(14.0, 1.2)
 body_color = Color(0.36, 0.2, 0.12, 1)
-script = ExtResource("16_barricade")
 
 [node name="BarricadeFarLeft" type="Node3D" parent="."]
 position = Vector3(35, 0, 2)
+script = ExtResource("16_barricade")
 team_id = 1
 max_health = 1800.0
 footprint_size = Vector2(14.0, 1.2)
 body_color = Color(0.36, 0.2, 0.12, 1)
-script = ExtResource("16_barricade")
 
 [node name="FormationInput" type="Node" parent="."]
 script = ExtResource("4_input")
-camera_path = NodePath("../RTSCamera")
+camera_path = NodePath("../CameraRig/Pivot/Camera3D")
 selection_overlay_path = NodePath("../CombatHud/SelectionBoxOverlay")
 player_formation_paths = [NodePath("../PlayerSpearmen"), NodePath("../PlayerSpearmenTwo"), NodePath("../PlayerCavalry"), NodePath("../PlayerArchers"), NodePath("../PlayerArchersTwo")]
 enemy_formation_paths = [NodePath("../EnemySpearmen"), NodePath("../EnemySpearmenTwo"), NodePath("../EnemyCavalry"), NodePath("../EnemyArchers"), NodePath("../EnemyArchersTwo")]

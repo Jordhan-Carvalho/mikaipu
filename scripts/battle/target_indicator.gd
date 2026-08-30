@@ -54,6 +54,7 @@ func _process(_delta: float) -> void:
 		return
 	visible = true
 	var target_position: Vector3 = target.call("get_target_position")
+	var targeting_center: Vector3 = target.call("get_targeting_center") if target.has_method("get_targeting_center") else target_position + Vector3.UP
 	global_position = Vector3(target_position.x, 0.0, target_position.z)
 	var radius := float(target.call("get_targeting_radius")) if target.has_method("get_targeting_radius") else 1.0
 	_ring.scale = Vector3(maxf(1.0, radius), 1.0, maxf(1.0, radius))
@@ -62,7 +63,7 @@ func _process(_delta: float) -> void:
 	_material.albedo_color = Color(1.0, 0.22, 0.08, 0.95) if charging else Color(1.0, 0.72, 0.12, 0.9)
 	_label.modulate = Color("#ff6640") if charging else Color("#ffd56b")
 	_label.text = "CHARGING: %s" % _target_name(target) if charging else _target_name(target)
-	_label.position = Vector3(0.0, 0.35, 0.0)
+	_label.position = Vector3(0.0, maxf(1.8, targeting_center.y + 0.65), 0.0)
 	_update_debug_line(target_position)
 
 func _get_primary_target() -> Node:
@@ -84,7 +85,7 @@ func _target_name(target: Node) -> String:
 	if target is Formation:
 		return target.unit_name
 	if target is Structure:
-		return target.structure_name
+		return target.get_display_name()
 	return "WARLORD" if target.has_method("get_state_name") else target.name
 
 func _update_debug_line(target_position: Vector3) -> void:

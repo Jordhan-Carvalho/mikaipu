@@ -1,6 +1,11 @@
 class_name Barricade
 extends Structure
 
+func get_melee_contact_candidates(approach_face: Vector3, soldier_spacing: float, melee_range: float, navigation_clearance: float) -> Array[Dictionary]:
+	# Barricades are attacked from the side selected by the attacking formation;
+	# do not send soldiers around the defensive line to fill other faces.
+	return _get_face_contact_candidates(approach_face, 0, soldier_spacing, melee_range, navigation_clearance)
+
 func blocks_segment(from: Vector3, to: Vector3, padding := 1.0) -> Dictionary:
 	if destroyed or not blocks_movement:
 		return {}

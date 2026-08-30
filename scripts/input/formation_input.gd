@@ -105,6 +105,9 @@ func set_commands_enabled(value: bool) -> void:
 func set_targeting_debug(value: bool) -> void:
 	targeting_debug_enabled = value
 
+func is_gameplay_drag_active() -> bool:
+	return _right_dragging or _left_selection_pending
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed: _cancel_drag()
 	if event is InputEventMouseButton:
@@ -186,17 +189,36 @@ func _find_enemy_target_from_screen(screen_position: Vector2) -> Node:
 	var origin := _camera.project_ray_origin(screen_position)
 	var direction := _camera.project_ray_normal(screen_position)
 	_last_targeting_hit_name = "Ground"
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + direction * 200.0, TARGETING_COLLISION_LAYER)
-	query.collide_with_areas = true
-	query.collide_with_bodies = false
-	var hit := _camera.get_world_3d().direct_space_state.intersect_ray(query)
-	if not hit.is_empty():
+	var excluded: Array[RID] = []
+	var valid_targets: Array[Node] = []
+	# Formation targeting volumes are intentionally generous. Continue through
+	# friendly/invalid volumes instead of turning an enemy click into Move.
+	for _attempt in range(64):
+		var query := PhysicsRayQueryParameters3D.create(origin, origin + direction * 200.0, TARGETING_COLLISION_LAYER, excluded)
+		query.collide_with_areas = true
+		query.collide_with_bodies = false
+		var hit := _camera.get_world_3d().direct_space_state.intersect_ray(query)
+		if hit.is_empty():
+			break
 		var collider := hit.get("collider") as Node
-		_last_targeting_hit_name = collider.name if collider != null else "Unknown"
 		var resolved := _resolve_target_from_hit(collider)
-		if _is_valid_enemy_target(resolved):
-			return resolved
-	return null
+		if _is_valid_enemy_target(resolved) and not valid_targets.has(resolved):
+			valid_targets.append(resolved)
+		if collider is CollisionObject3D:
+			excluded.append(collider.get_rid())
+		else:
+			break
+	var best_target: Node = null
+	var best_score := INF
+	for candidate in valid_targets:
+		var center: Vector3 = candidate.call("get_targeting_center") if candidate.has_method("get_targeting_center") else candidate.call("get_target_position")
+		var score := screen_position.distance_squared_to(_camera.unproject_position(center))
+		if score < best_score:
+			best_target = candidate
+			best_score = score
+	if best_target != null:
+		_last_targeting_hit_name = best_target.name
+	return best_target
 
 func _resolve_target_from_hit(hit_node: Node) -> Node:
 	var current := hit_node

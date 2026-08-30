@@ -80,7 +80,7 @@ func _process(_delta: float) -> void:
 		var target: Node = selected.get_ranged_target()
 		var target_name: String = str(target.get("unit_name")) if target is Formation else str(target.get("structure_name")) if target != null else "None"
 		ranged_text = "\nRanged: %s\nTarget: %s\nRange: %.1fm / %.1fm\nVolley: %.1fs" % [selected.get_ranged_status(), target_name, selected.get_ranged_distance(), selected.unit_definition.ranged_max_range, selected.ranged_volley_cooldown]
-	var structure_text := "\nStructure target: %s\nOrder: %s" % [selected.get_structure_target().structure_name, selected.get_structure_order_status()] if selected.get_structure_target() != null else ""
+	var structure_text := "\nStructure target: %s\nOrder: %s\nContact face: %s\nActive structure attackers: %d" % [selected.get_structure_target().get_display_name(), selected.get_structure_order_status(), selected.get_structure_attack_face_name(), selected.get_active_structure_attacker_count()] if selected.get_structure_target() != null else ""
 	_status_label.text = "%s\n\n%s\n%d / %d\nState: %s\nCommand: %s%s\nAuto Attack: %s\nAbility: %s%s%s\nLocal melee: %d\nReceiving: %s ATTACK\nQ: %s | S: Stop\nF enemy chase: %s | E test enemy charge\nG debug, R restart." % [objective_text, selected.unit_name, selected.get_alive_count(), selected.get_max_count(), selected.get_state_name(), selected.get_command_name(), _get_target_text(selected), formation_input.call("get_selected_auto_attack_state"), selected.get_ability_state_name(), ranged_text, structure_text, selected.get_local_melee_count(), selected.receiving_direction, ability_text, "ON" if combat_resolver.enemy_chase_enabled else "STATIONARY"]
 
 func _get_objective_text() -> String:
@@ -106,5 +106,5 @@ func _get_target_text(entity: Node) -> String:
 	if target is Formation:
 		return "\nTarget: %s" % target.unit_name
 	if target is Structure:
-		return "\nTarget: %s" % target.structure_name
+		return "\nTarget: %s" % target.get_display_name()
 	return "\nTarget: WARLORD"

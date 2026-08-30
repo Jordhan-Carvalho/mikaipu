@@ -24,6 +24,7 @@ var _body_material: StandardMaterial3D
 var _health_fill: MeshInstance3D
 var _status_label: Label3D
 var _interaction_area: Area3D
+var _melee_contact_reservations: Dictionary = {}
 
 func _ready() -> void:
 	current_health = max_health
@@ -33,6 +34,9 @@ func _ready() -> void:
 
 func is_target_alive() -> bool:
 	return not destroyed
+
+func get_display_name() -> String:
+	return structure_name
 
 func get_target_position() -> Vector3:
 	return global_position
@@ -60,6 +64,51 @@ func get_attack_position(attacker_position: Vector3, attack_range: float, format
 	if outward.length_squared() < 0.0001:
 		outward = Vector3.BACK
 	return surface + outward.normalized() * maxf(0.1, attack_range + formation_depth - 0.25)
+
+func get_attack_face(attacker_position: Vector3) -> Vector3:
+	var local := attacker_position - global_position
+	var half_x := footprint_size.x * 0.5
+	var half_z := footprint_size.y * 0.5
+	if absf(local.x) / maxf(0.01, half_x) > absf(local.z) / maxf(0.01, half_z):
+		return Vector3.RIGHT if local.x >= 0.0 else Vector3.LEFT
+	return Vector3.BACK if local.z >= 0.0 else Vector3.FORWARD
+
+func get_melee_contact_candidates(approach_face: Vector3, soldier_spacing: float, melee_range: float, navigation_clearance: float) -> Array[Dictionary]:
+	var candidates: Array[Dictionary] = []
+	var faces := [approach_face, Vector3(-approach_face.z, 0.0, approach_face.x), -approach_face, Vector3(approach_face.z, 0.0, -approach_face.x)]
+	for face_index in range(faces.size()):
+		candidates.append_array(_get_face_contact_candidates(faces[face_index] as Vector3, face_index, soldier_spacing, melee_range, navigation_clearance))
+	return candidates
+
+func _get_face_contact_candidates(normal: Vector3, face_index: int, soldier_spacing: float, melee_range: float, navigation_clearance: float) -> Array[Dictionary]:
+	var face_width := footprint_size.x if absf(normal.z) > 0.5 else footprint_size.y
+	var spacing := maxf(0.75, maxf(frontage_spacing, soldier_spacing * 0.85))
+	var count := clampi(floori(face_width / spacing) + 1, 1, max_melee_contact_slots)
+	var half_depth := footprint_size.y * 0.5 if absf(normal.z) > 0.5 else footprint_size.x * 0.5
+	var surface := global_position + normal * half_depth
+	var standoff := maxf(navigation_clearance + 0.10, melee_range - 0.55)
+	var tangent := Vector3(-normal.z, 0.0, normal.x)
+	var candidates: Array[Dictionary] = []
+	for index in range(count):
+		var lateral := (float(index) - float(count - 1) * 0.5) * spacing
+		candidates.append({"id": "%d:%d" % [face_index, index], "position": surface + normal * standoff + tangent * lateral, "normal": normal})
+	return candidates
+
+func reserve_melee_contact(owner_id: int, soldier_id: int, candidate: Dictionary) -> bool:
+	var contact_id := str(candidate.get("id", ""))
+	if contact_id.is_empty():
+		return false
+	var existing: Dictionary = _melee_contact_reservations.get(contact_id, {}) as Dictionary
+	if not existing.is_empty() and int(existing.get("owner_id", -1)) != owner_id:
+		return false
+	_melee_contact_reservations[contact_id] = {"owner_id": owner_id, "soldier_id": soldier_id}
+	return true
+
+func release_melee_contacts(owner_id: int) -> void:
+	for contact_id in _melee_contact_reservations.keys():
+		var reservation: Dictionary = _melee_contact_reservations[contact_id] as Dictionary
+		if int(reservation.get("owner_id", -1)) == owner_id:
+			_melee_contact_reservations.erase(contact_id)
 
 func get_melee_contact_layout(attacker_position: Vector3, attack_range: float, soldier_spacing: float, soldier_count: int) -> Dictionary:
 	var local := attacker_position - global_position
@@ -158,6 +207,7 @@ func _destroy() -> void:
 	if destroyed:
 		return
 	destroyed = true
+	_melee_contact_reservations.clear()
 	if _interaction_area != null:
 		_interaction_area.collision_layer = 0
 		_interaction_area.monitorable = false

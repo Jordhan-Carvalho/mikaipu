@@ -27,6 +27,7 @@ const COMMAND_FEEDBACK_SCRIPT := preload("res://scripts/battle/command_feedback.
 @onready var combat_feedback: CombatFeedback = $CombatFeedback
 @onready var arrow_volley_visuals: Node3D = $ArrowVolleyVisuals
 @onready var battle_manager: BattleManager = $BattleManager
+@onready var battle_navigation: BattleNavigation = $BattleNavigation
 
 func _ready() -> void:
 	var environment := Environment.new()
@@ -43,6 +44,7 @@ func _ready() -> void:
 	var generated_barricades := _create_barricade_line()
 	var all_structures: Array = [central_keep, left_tower, right_tower]
 	all_structures.append_array(generated_barricades)
+	battle_navigation.configure(all_structures)
 	formation_input.set_enemy_structures(all_structures)
 	combat_resolver.configure(all_formations, arrow_volley_visuals, warlord, all_structures, [warlord, enemy_warlord])
 	battle_manager.configure(central_keep, combat_resolver, formation_input, warlord, all_formations, all_structures)
@@ -139,6 +141,7 @@ func _create_barricade_line() -> Array:
 	for index in range(20):
 		var barricade := Barricade.new()
 		barricade.name = "Barricade_%02d" % index
+		barricade.structure_name = "Barricade %02d" % (index + 1)
 		barricade.team_id = BattleSide.DEFENDER
 		barricade.max_health = 1800.0
 		barricade.footprint_size = Vector2(4.0, 1.2)
