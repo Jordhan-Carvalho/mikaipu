@@ -1,0 +1,25 @@
+class_name UnitDefinition
+extends Resource
+
+enum UnitType { SPEARMEN, CAVALRY }
+
+@export var unit_type := UnitType.SPEARMEN
+@export var display_name := "Spearmen"
+@export var movement_speed := 7.0
+@export var spacing := 1.4
+@export var melee_attack_per_second := 5.0
+@export var melee_range := 1.75
+@export var placeholder_color := Color("#d5bc70")
+@export var placeholder_scale := Vector3.ONE
+
+@export_category("Cavalry Charge")
+@export var charge_speed_multiplier := 1.5
+@export var charge_power_per_active_soldier := 25.0
+@export var minimum_charge_distance := 7.0
+@export var charge_facing_half_angle_degrees := 35.0
+
+@export_category("Spearmen Brace")
+@export var brace_preparation_seconds := 0.6
+@export var brace_stationary_distance := 0.2
+@export var brace_front_damage_multiplier := 0.15
+@export var brace_counter_damage_per_active_soldier := 25.0

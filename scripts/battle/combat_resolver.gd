@@ -2,161 +2,222 @@ class_name CombatResolver
 extends Node
 
 signal battle_finished(result: String)
-signal damage_dealt(world_position: Vector3, amount: float, direction: String, modifier: float)
+signal damage_dealt(world_position: Vector3, amount: float, direction: String, modifier: float, event_label: String)
 
 const FRONT := "FRONT"
 const FLANK := "FLANK"
 const REAR := "REAR"
 
 @export var engagement_range := 5.0
+@export_range(0.1, 1.0, 0.05) var contact_commit_ratio := 1.0
 @export var combat_tick_seconds := 0.5
-@export var attack_per_soldier_per_second := 5.0
 @export var front_half_angle_degrees := 60.0
 @export var front_modifier := 1.0
 @export var flank_modifier := 1.3
 @export var rear_modifier := 1.6
+@export var charge_front_modifier := 1.0
+@export var charge_flank_modifier := 1.5
+@export var charge_rear_modifier := 2.0
 
-var player_formation: Formation
-var enemy_formation: Formation
+var formations: Array[Formation] = []
 var enemy_chase_enabled := true
 var battle_over := false
 var _tick_accumulator := 0.0
-var _formations_engaged := false
-var _enemy_closing_to_contact := false
 
 class MeleeContact:
 	var active_count := 0
 	var attacker_position := Vector3.ZERO
 	var defender_position := Vector3.ZERO
 
-func configure(player: Formation, enemy: Formation) -> void:
-	player_formation = player
-	enemy_formation = enemy
+func configure(registered_formations: Array[Formation]) -> void:
+	formations = registered_formations
 
 func toggle_enemy_chase() -> bool:
 	enemy_chase_enabled = not enemy_chase_enabled
-	if not enemy_chase_enabled and not battle_over and enemy_formation.combat_state != Formation.CombatState.DEFEATED:
-		_enemy_closing_to_contact = false
-		enemy_formation.halt_movement()
+	if not enemy_chase_enabled:
+		for formation in formations:
+			if formation.team_id == 1 and formation.combat_state != Formation.CombatState.DEFEATED:
+				if formation.combat_target != null and formation.combat_target.combat_target == formation:
+					formation.hold_position_in_combat()
+				else:
+					formation.halt_movement()
 	return enemy_chase_enabled
 
+func get_nearest_hostile(source: Formation) -> Formation:
+	var nearest: Formation
+	var best_distance := INF
+	for candidate in formations:
+		if candidate == source or candidate.team_id == source.team_id or candidate.combat_state == Formation.CombatState.DEFEATED:
+			continue
+		if candidate.combat_target != null and candidate.combat_target != source:
+			continue
+		var distance := source.get_current_center().distance_squared_to(candidate.get_current_center())
+		if distance < best_distance:
+			nearest = candidate
+			best_distance = distance
+	return nearest
+
+func request_charge(source: Formation) -> bool:
+	return source.start_charge(get_nearest_hostile(source))
+
 func _physics_process(delta: float) -> void:
-	if battle_over or player_formation == null or enemy_formation == null:
+	if battle_over or formations.is_empty():
 		return
-	if player_formation.combat_state == Formation.CombatState.DEFEATED or enemy_formation.combat_state == Formation.CombatState.DEFEATED:
+	if _is_team_defeated(0) or _is_team_defeated(1):
 		_finish_battle()
 		return
-	var distance := player_formation.get_current_center().distance_to(enemy_formation.get_current_center())
-	if distance <= engagement_range:
-		_begin_engagement()
-		_update_enemy_contact_closing()
-		_tick_accumulator += delta
-		while _tick_accumulator >= combat_tick_seconds and not battle_over:
-			_tick_accumulator -= combat_tick_seconds
-			_resolve_combat_tick()
-		return
-	_end_engagement()
+	_clear_separated_engagements()
 	if enemy_chase_enabled:
-		_update_enemy_chase()
-	elif enemy_formation.combat_state != Formation.CombatState.DEFEATED:
-		enemy_formation.halt_movement()
+		_update_enemy_pursuit()
+	_establish_nearby_engagements()
+	_resolve_charge_impacts()
+	_tick_accumulator += delta
+	while _tick_accumulator >= combat_tick_seconds and not battle_over:
+		_tick_accumulator -= combat_tick_seconds
+		_resolve_combat_tick()
 
-func _update_enemy_chase() -> void:
-	var enemy_center := enemy_formation.get_current_center()
-	var player_center := player_formation.get_current_center()
-	var to_player := _flat_direction(player_center - enemy_center, enemy_formation.facing)
-	var stopping_point := player_center - to_player * (engagement_range * 0.75)
-	enemy_formation.set_combat_state(Formation.CombatState.MOVING, player_formation)
-	enemy_formation.issue_order(stopping_point, to_player)
+func _clear_separated_engagements() -> void:
+	for formation in formations:
+		var target := formation.combat_target
+		if target == null:
+			continue
+		if not is_instance_valid(target) or target.combat_state == Formation.CombatState.DEFEATED or target.combat_target != formation:
+			formation.disengage()
+			continue
+		if formation.get_current_center().distance_to(target.get_current_center()) > engagement_range:
+			formation.disengage()
+			if is_instance_valid(target) and target.combat_target == formation:
+				target.disengage()
 
-func _update_enemy_contact_closing() -> void:
-	if not enemy_chase_enabled:
-		_enemy_closing_to_contact = false
-		return
-	if has_melee_contact(enemy_formation, player_formation):
-		if _enemy_closing_to_contact:
-			enemy_formation.halt_movement()
-			enemy_formation.set_combat_state(Formation.CombatState.ENGAGED, player_formation)
-			_enemy_closing_to_contact = false
-		return
-	_enemy_closing_to_contact = true
-	var enemy_center := enemy_formation.get_current_center()
-	var player_center := player_formation.get_current_center()
-	var to_player := _flat_direction(player_center - enemy_center, enemy_formation.facing)
-	enemy_formation.set_combat_state(Formation.CombatState.MOVING, player_formation)
-	enemy_formation.issue_order(player_center, to_player)
+func _update_enemy_pursuit() -> void:
+	for enemy in formations:
+		if enemy.team_id != 1 or enemy.combat_state == Formation.CombatState.DEFEATED or enemy.ability_state == Formation.AbilityState.CAVALRY_CHARGING:
+			continue
+		var target := enemy.combat_target if enemy.combat_target != null else get_nearest_hostile(enemy)
+		if target == null:
+			continue
+		if enemy.combat_target == target and target.combat_target == enemy and _has_full_melee_commitment(enemy, target):
+			if enemy.combat_state != Formation.CombatState.ENGAGED:
+				enemy.hold_position_in_combat()
+			continue
+		var to_target := _flat_direction(target.get_current_center() - enemy.get_current_center(), enemy.facing)
+		var target_destination := target.get_current_center()
+		if enemy.combat_target == null:
+			target_destination -= to_target * (engagement_range * 0.75)
+		enemy.issue_order(target_destination, to_target)
 
-func _begin_engagement() -> void:
-	_formations_engaged = true
-	if player_formation.combat_state != Formation.CombatState.ENGAGED:
-		player_formation.set_combat_state(Formation.CombatState.ENGAGED, enemy_formation)
-	if enemy_formation.combat_state != Formation.CombatState.ENGAGED:
-		enemy_formation.set_combat_state(Formation.CombatState.ENGAGED, player_formation)
+func _establish_nearby_engagements() -> void:
+	for first_index in range(formations.size()):
+		var first := formations[first_index]
+		if first.combat_state == Formation.CombatState.DEFEATED:
+			continue
+		for second_index in range(first_index + 1, formations.size()):
+			var second := formations[second_index]
+			if second.combat_state == Formation.CombatState.DEFEATED or first.team_id == second.team_id:
+				continue
+			if first.get_current_center().distance_to(second.get_current_center()) > engagement_range:
+				continue
+			if first.combat_target != null and first.combat_target != second:
+				continue
+			if second.combat_target != null and second.combat_target != first:
+				continue
+			_begin_engagement(first, second)
 
-func _end_engagement() -> void:
-	if not _formations_engaged:
-		return
-	_formations_engaged = false
-	_enemy_closing_to_contact = false
-	_tick_accumulator = 0.0
-	if player_formation.combat_target == enemy_formation:
-		player_formation.disengage()
-	if enemy_formation.combat_target == player_formation:
-		enemy_formation.disengage()
+func _begin_engagement(first: Formation, second: Formation) -> void:
+	first.set_combat_state(Formation.CombatState.ENGAGED, second)
+	second.set_combat_state(Formation.CombatState.ENGAGED, first)
+
+func _resolve_charge_impacts() -> void:
+	for charger in formations:
+		if charger.ability_state != Formation.AbilityState.CAVALRY_CHARGING:
+			continue
+		var defender := charger.get_charge_target()
+		if defender == null or not is_instance_valid(defender) or defender.combat_state == Formation.CombatState.DEFEATED:
+			charger.consume_charge()
+			continue
+		if charger.get_current_center().distance_to(defender.get_current_center()) > engagement_range:
+			continue
+		_begin_engagement(charger, defender)
+		if not has_melee_contact(charger, defender):
+			continue
+		var cavalry_contact := get_melee_contact(charger, defender)
+		var direction := classify_attack_direction(charger, defender)
+		if charger.is_charge_valid() and cavalry_contact.active_count > 0:
+			_apply_charge_impact(charger, defender, cavalry_contact, direction)
+		charger.consume_charge()
+
+func _apply_charge_impact(charger: Formation, defender: Formation, contact: MeleeContact, direction: String) -> void:
+	var definition := charger.unit_definition
+	var travel_factor := clampf(charger.get_charge_travelled() / definition.minimum_charge_distance, 1.0, 1.5)
+	var modifier := _get_charge_modifier(direction)
+	var damage := float(contact.active_count) * definition.charge_power_per_active_soldier * definition.charge_speed_multiplier * travel_factor * modifier
+	var event_label := "CHARGE" if direction == FRONT else "%s CHARGE" % direction
+	if defender.is_effectively_braced() and direction == FRONT:
+		damage *= defender.unit_definition.brace_front_damage_multiplier
+		event_label = "CHARGE COUNTERED"
+	var applied := defender.receive_damage(damage, direction, contact.attacker_position)
+	if applied > 0.0:
+		damage_dealt.emit(contact.defender_position, applied, direction, modifier, event_label)
+	if defender.is_effectively_braced() and direction == FRONT and defender.combat_state != Formation.CombatState.DEFEATED:
+		var spear_contact := get_melee_contact(defender, charger)
+		var counter_damage := float(spear_contact.active_count) * defender.unit_definition.brace_counter_damage_per_active_soldier
+		var applied_counter := charger.receive_damage(counter_damage, FRONT, spear_contact.attacker_position)
+		if applied_counter > 0.0:
+			damage_dealt.emit(spear_contact.defender_position, applied_counter, FRONT, 1.0, "BRACED")
 
 func _resolve_combat_tick() -> void:
-	var player_melee: MeleeContact = get_melee_contact(player_formation, enemy_formation)
-	var enemy_melee: MeleeContact = get_melee_contact(enemy_formation, player_formation)
-	var player_attack_direction := classify_attack_direction(player_formation, enemy_formation)
-	var enemy_attack_direction := classify_attack_direction(enemy_formation, player_formation)
-	var damage_to_enemy := calculate_damage(player_formation, player_melee.active_count, player_attack_direction)
-	var damage_to_player := calculate_damage(enemy_formation, enemy_melee.active_count, enemy_attack_direction)
-	if damage_to_enemy > 0.0:
-		var applied_to_enemy := enemy_formation.receive_damage(damage_to_enemy, player_attack_direction, player_melee.attacker_position)
-		if applied_to_enemy > 0.0:
-			damage_dealt.emit(player_melee.defender_position, applied_to_enemy, player_attack_direction, get_direction_modifier(player_attack_direction))
-	if damage_to_player > 0.0:
-		var applied_to_player := player_formation.receive_damage(damage_to_player, enemy_attack_direction, enemy_melee.attacker_position)
-		if applied_to_player > 0.0:
-			damage_dealt.emit(enemy_melee.defender_position, applied_to_player, enemy_attack_direction, get_direction_modifier(enemy_attack_direction))
-	if player_formation.combat_state == Formation.CombatState.DEFEATED or enemy_formation.combat_state == Formation.CombatState.DEFEATED:
+	for attacker in formations:
+		var defender := attacker.combat_target
+		if defender == null or not is_instance_valid(defender) or defender.combat_target != attacker or attacker.get_instance_id() > defender.get_instance_id():
+			continue
+		if attacker.combat_state == Formation.CombatState.DEFEATED or defender.combat_state == Formation.CombatState.DEFEATED:
+			continue
+		var attacker_contact := get_melee_contact(attacker, defender)
+		var defender_contact := get_melee_contact(defender, attacker)
+		_apply_normal_damage(attacker, defender, attacker_contact, classify_attack_direction(attacker, defender))
+		_apply_normal_damage(defender, attacker, defender_contact, classify_attack_direction(defender, attacker))
+	if _is_team_defeated(0) or _is_team_defeated(1):
 		_finish_battle()
+
+func _apply_normal_damage(attacker: Formation, defender: Formation, contact: MeleeContact, direction: String) -> void:
+	var damage := calculate_damage(attacker, contact.active_count, direction)
+	if damage <= 0.0:
+		return
+	var applied := defender.receive_damage(damage, direction, contact.attacker_position)
+	if applied > 0.0:
+		damage_dealt.emit(contact.defender_position, applied, direction, get_direction_modifier(direction), "")
 
 func classify_attack_direction(attacker: Formation, defender: Formation) -> String:
 	var defender_to_attacker := _flat_direction(attacker.get_current_center() - defender.get_current_center(), defender.facing)
 	var angle := rad_to_deg(acos(clampf(defender.facing.dot(defender_to_attacker), -1.0, 1.0)))
-	if angle <= front_half_angle_degrees:
-		return FRONT
-	if angle >= 180.0 - front_half_angle_degrees:
-		return REAR
+	if angle <= front_half_angle_degrees: return FRONT
+	if angle >= 180.0 - front_half_angle_degrees: return REAR
 	return FLANK
 
 func get_active_melee_combatant_count(attacker: Formation, defender: Formation) -> int:
 	return get_melee_contact(attacker, defender).active_count
 
 func has_melee_contact(attacker: Formation, defender: Formation) -> bool:
-	var attackers := attacker.get_living_soldiers()
-	var defenders := defender.get_living_soldiers()
-	var melee_range_squared: float = attacker.melee_range * attacker.melee_range
-	for attacking_soldier in attackers:
-		for defending_soldier in defenders:
-			if attacking_soldier.global_position.distance_squared_to(defending_soldier.global_position) <= melee_range_squared:
-				return true
-	return false
+	return get_melee_contact(attacker, defender).active_count > 0
+
+func _has_full_melee_commitment(first: Formation, second: Formation) -> bool:
+	var first_alive := first.get_alive_count()
+	var second_alive := second.get_alive_count()
+	if first_alive == 0 or second_alive == 0:
+		return true
+	var first_active := get_melee_contact(first, second).active_count
+	var second_active := get_melee_contact(second, first).active_count
+	return float(first_active) / float(first_alive) >= contact_commit_ratio and float(second_active) / float(second_alive) >= contact_commit_ratio
 
 func get_melee_contact(attacker: Formation, defender: Formation) -> MeleeContact:
 	var result: MeleeContact = MeleeContact.new()
-	var attackers := attacker.get_living_soldiers()
-	var defenders := defender.get_living_soldiers()
-	if attackers.is_empty() or defenders.is_empty():
-		return result
-	var melee_range_squared: float = attacker.melee_range * attacker.melee_range
+	var melee_range_squared := attacker.melee_range * attacker.melee_range
 	var attacker_sum := Vector3.ZERO
 	var defender_sum := Vector3.ZERO
-	for attacking_soldier in attackers:
-		var closest_defender: Soldier = null
-		var closest_distance_squared: float = INF
-		for defending_soldier in defenders:
+	for attacking_soldier in attacker.get_living_soldiers():
+		var closest_defender: Soldier
+		var closest_distance_squared := INF
+		for defending_soldier in defender.get_living_soldiers():
 			var distance_squared := attacking_soldier.global_position.distance_squared_to(defending_soldier.global_position)
 			if distance_squared < closest_distance_squared:
 				closest_distance_squared = distance_squared
@@ -171,7 +232,7 @@ func get_melee_contact(attacker: Formation, defender: Formation) -> MeleeContact
 	return result
 
 func calculate_damage(attacker: Formation, active_combatants: int, direction: String) -> float:
-	return float(active_combatants) * attack_per_soldier_per_second * get_direction_modifier(direction) * combat_tick_seconds
+	return float(active_combatants) * attacker.get_melee_attack_per_second() * get_direction_modifier(direction) * combat_tick_seconds
 
 func get_direction_modifier(direction: String) -> float:
 	match direction:
@@ -180,12 +241,26 @@ func get_direction_modifier(direction: String) -> float:
 		REAR: return rear_modifier
 	return front_modifier
 
+func _get_charge_modifier(direction: String) -> float:
+	match direction:
+		FRONT: return charge_front_modifier
+		FLANK: return charge_flank_modifier
+		REAR: return charge_rear_modifier
+	return charge_front_modifier
+
+func _is_team_defeated(team: int) -> bool:
+	var has_member := false
+	for formation in formations:
+		if formation.team_id == team:
+			has_member = true
+			if formation.combat_state != Formation.CombatState.DEFEATED:
+				return false
+	return has_member
+
 func _finish_battle() -> void:
-	if battle_over:
-		return
+	if battle_over: return
 	battle_over = true
-	var result := "DEFEAT" if player_formation.combat_state == Formation.CombatState.DEFEATED else "VICTORY"
-	battle_finished.emit(result)
+	battle_finished.emit("DEFEAT" if _is_team_defeated(0) else "VICTORY")
 
 func _flat_direction(vector: Vector3, fallback: Vector3) -> Vector3:
 	var flat := Vector3(vector.x, 0.0, vector.z)

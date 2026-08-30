@@ -6,7 +6,7 @@ extends Node3D
 
 var _next_offset_left := true
 
-func show_damage(world_position: Vector3, amount: float, direction: String, modifier: float) -> void:
+func show_damage(world_position: Vector3, amount: float, direction: String, modifier: float, event_label: String = "") -> void:
 	if amount <= 0.0:
 		return
 	var label := Label3D.new()
@@ -15,6 +15,8 @@ func show_damage(world_position: Vector3, amount: float, direction: String, modi
 	label.outline_size = 8
 	label.modulate = Color("#ffe38a")
 	label.text = _format_damage(amount)
+	if not event_label.is_empty():
+		label.text += " %s" % event_label
 	if show_direction_details_in_debug and OS.is_debug_build():
 		label.text += " %s x%.1f" % [direction, modifier]
 	var lateral_offset := -0.2 if _next_offset_left else 0.2

@@ -67,6 +67,10 @@ func set_placeholder_color(color: Color) -> void:
 	if _body_material != null:
 		_body_material.albedo_color = color
 
+func set_placeholder_scale(value: Vector3) -> void:
+	if _body != null:
+		_body.scale = value
+
 func die() -> void:
 	if not is_alive:
 		return

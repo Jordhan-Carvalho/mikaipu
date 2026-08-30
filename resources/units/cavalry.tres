@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="UnitDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/units/unit_definition.gd" id="1_unit"]
+
+[resource]
+script = ExtResource("1_unit")
+unit_type = 1
+display_name = "Cavalry"
+movement_speed = 10.0
+spacing = 2.0
+melee_attack_per_second = 3.5
+melee_range = 2.0
+placeholder_color = Color(0.16, 0.22, 0.42, 1)
+placeholder_scale = Vector3(1.35, 0.8, 1.35)
+charge_speed_multiplier = 1.5
+charge_power_per_active_soldier = 25.0
+minimum_charge_distance = 7.0
+charge_facing_half_angle_degrees = 35.0

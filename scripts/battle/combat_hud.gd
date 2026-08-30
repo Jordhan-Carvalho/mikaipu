@@ -1,8 +1,8 @@
 class_name CombatHud
 extends CanvasLayer
 
-var player_formation: Formation
-var combat_resolver: Node
+var formation_input: Node
+var combat_resolver: CombatResolver
 var _status_label: Label
 var _result_label: Label
 
@@ -23,17 +23,18 @@ func _ready() -> void:
 	_result_label.add_theme_color_override("font_color", Color("#ffe38a"))
 	add_child(_result_label)
 
-func configure(player: Formation, resolver: Node) -> void:
-	player_formation = player
+func configure(input_controller: Node, resolver: CombatResolver) -> void:
+	formation_input = input_controller
 	combat_resolver = resolver
 
 func show_result(result: String) -> void:
 	_result_label.text = result
 
 func _process(_delta: float) -> void:
-	if player_formation == null or combat_resolver == null:
+	if formation_input == null or combat_resolver == null:
 		return
-	if not player_formation.selected:
-		_status_label.text = "Left click the player formation to inspect it.\nEnemy chase: %s (F to toggle)\nR to restart." % ("ON" if combat_resolver.get("enemy_chase_enabled") else "STATIONARY")
+	var selected: Formation = formation_input.call("get_selected_formation") as Formation
+	if selected == null:
+		_status_label.text = "Left click a player formation to select it.\nF enemy chase: %s\nQ: Cavalry charge / Spearmen Brace\nE: test enemy Cavalry charge\nG debug, R restart." % ("ON" if combat_resolver.enemy_chase_enabled else "STATIONARY")
 		return
-	_status_label.text = "%s\n%d / %d\nState: %s\nLocal melee: %d\nReceiving: %s ATTACK\nEnemy chase: %s (F to toggle)\nG local-melee debug\nR to restart." % [player_formation.unit_name, player_formation.get_alive_count(), player_formation.get_max_count(), player_formation.get_state_name(), player_formation.get_local_melee_count(), player_formation.receiving_direction, "ON" if combat_resolver.get("enemy_chase_enabled") else "STATIONARY"]
+	_status_label.text = "%s\n%d / %d\nState: %s\nAbility: %s\nLocal melee: %d\nReceiving: %s ATTACK\nQ: %s\nF enemy chase: %s | E test enemy charge\nG debug, R restart." % [selected.unit_name, selected.get_alive_count(), selected.get_max_count(), selected.get_state_name(), selected.get_ability_state_name(), selected.get_local_melee_count(), selected.receiving_direction, "Charge nearest enemy" if selected.is_cavalry() else "Toggle Brace", "ON" if combat_resolver.enemy_chase_enabled else "STATIONARY"]

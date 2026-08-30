@@ -1,10 +1,22 @@
 # Combat design (agreed direction)
 
-This document records the intended combat design and the current Milestone 2 proof of concept.
+This document records the intended combat design and the current Milestone 3 proof of concept.
 
-## Milestone 2 implementation
+## Milestone 3: Cavalry Charge and Spearmen Brace
 
-The battle test contains two 30-soldier Spearmen formations. Combat is resolved at formation level every 0.5 seconds, not through independent soldier targeting.
+The battle test now has player Spearmen (30) and Cavalry (18), against matching enemy formations. Unit definitions centralize movement, spacing, melee, charge, and brace tuning.
+
+- Cavalry move at 10 units/s, use 2.0 spacing, and have lower sustained melee attack than Spearmen.
+- `Q` starts a player Cavalry charge toward its nearest hostile formation when it is 7+ units away and facing within 35 degrees. A charge moves at 1.5x speed, requires 7 units of travel, resolves once at actual melee contact, then requires disengagement and 7 units of separation to reset.
+- Charge impact is formation-level: active nearby cavalry × 25 × speed/travel factor × direction. Temporary direction multipliers are Front 1.0, Flank 1.5, Rear 2.0.
+- `Q` toggles Spearmen Brace. Spearmen must remain within 0.2 units of their destination for 0.6 seconds; any movement/facing order cancels Brace.
+- A Braced Spearmen formation hit from the front receives only 15% of charge impact and deals a one-time counter-hit of active nearby Spearmen × 25. Brace does not protect flank/rear impacts.
+
+Charge and counter impacts still use aggregate formation HP and the existing casualty-selection and floating-feedback systems. Cavalry soldiers stay in formation slots during the approach; local melee resumes after impact. These values are deliberate PoC tuning, not final balance.
+
+## Milestone 2 baseline
+
+Milestone 2 introduced 30-soldier Spearmen formations and formation-level combat every 0.5 seconds, not independent soldier targeting. Milestone 3 retains this baseline for normal melee and extends it with Cavalry charge and Spearmen Brace.
 
 Temporary PoC values:
 
@@ -21,7 +33,7 @@ Melee damage uses only active combatants. A living soldier is active when at lea
 
 Each formation has an always-visible world-space health bar and surviving-soldier count. Every non-zero formation damage tick creates one floating damage number near the receiving contact line. Debug builds append the incoming direction and temporary modifier.
 
-During formation engagement, nearby soldiers may enter a visual-only local melee mode. Formation refreshes local targets every 0.25 seconds, limits normal target sharing to two attackers, and keeps every participant within 2.5 units of its assigned slot. Soldiers outside the contact area remain in formation. Soldier attack motion does not calculate damage; CombatResolver continues to use living soldiers physically within melee range as active combatants. `G` toggles local-melee target and slot debug lines.
+During formation engagement, soldiers enter a visual-only local melee mode as opponents come within the configured 6.5-unit local acquisition radius. They remain tethered within 5 units of their assigned slots, so rear and edge soldiers can feed into combat without becoming independent battlefield units. Up to six friendly soldiers may visually engage each nearby opponent; this deliberately lets full formations continue showing activity against a reduced enemy line. An advancing enemy formation now keeps closing until all living soldiers in both paired formations are within melee range, rather than stopping at first contact. Soldier attack motion does not calculate damage; CombatResolver continues to count only living soldiers physically within melee range as active combatants. `G` toggles local-melee target and slot debug lines.
 
 The enemy uses deterministic direct pursuit and faces the player until engagement. `F` toggles it stationary for controlled flank/rear tests. The player can continue issuing movement and facing orders while engaged. Combat stops and both formations disengage once their centers move outside engagement range. A battle ends at zero living soldiers, showing Victory or Defeat and stopping combat ticks.
 

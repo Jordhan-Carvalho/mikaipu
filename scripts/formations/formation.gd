@@ -4,7 +4,10 @@ extends Node3D
 const SOLDIER_SCENE := preload("res://scenes/units/soldier.tscn")
 const FORMATION_STATUS_DISPLAY_SCRIPT := preload("res://scripts/battle/formation_status_display.gd")
 enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
+enum AbilityState { NONE, BRACE_PREPARING, BRACED, CAVALRY_READY, CAVALRY_CHARGING, CAVALRY_NEEDS_RESET }
 
+@export var unit_definition: UnitDefinition
+@export var team_id := 0
 @export var soldier_count := 30
 @export var columns := 10
 @export var spacing := 1.4
@@ -15,12 +18,12 @@ enum CombatState { IDLE, MOVING, ENGAGED, DEFEATED }
 @export var soldier_color := Color("#d5bc70")
 @export var health_per_soldier := 100.0
 @export var melee_range := 1.75
-@export var local_melee_acquisition_range := 3.0
+@export var local_melee_acquisition_range := 6.5
 @export var local_melee_distance := 0.85
-@export var local_melee_max_deviation := 2.5
+@export var local_melee_max_deviation := 5.0
 @export var local_target_refresh_seconds := 0.25
 @export var local_visual_attack_interval := 0.8
-@export var local_max_attackers_per_target := 2
+@export var local_max_attackers_per_target := 6
 
 var soldiers: Array[Soldier] = []
 var destination := Vector3(0.0, 0.0, 3.0)
@@ -39,8 +42,15 @@ var _debug_instance: MeshInstance3D
 var _debug_material: StandardMaterial3D
 var _local_target_refresh_remaining := 0.0
 var local_melee_debug_enabled := false
+var ability_state := AbilityState.NONE
+var brace_facing := Vector3.FORWARD
+var _brace_remaining := 0.0
+var _charge_target: Formation
+var _charge_start_center := Vector3.ZERO
+var _last_charge_target: Formation
 
 func _ready() -> void:
+	_apply_unit_definition()
 	_create_debug_mesh()
 	destination = _flat(initial_center)
 	facing = _safe_facing(initial_facing, Vector3.FORWARD)
@@ -52,6 +62,7 @@ func _ready() -> void:
 		add_child(soldier)
 		soldier.global_position = slot
 		soldier.set_placeholder_color(soldier_color)
+		soldier.set_placeholder_scale(_get_placeholder_scale())
 		soldier.configure_local_melee(local_melee_acquisition_range, local_melee_distance, local_melee_max_deviation, local_visual_attack_interval)
 		soldier.set_desired_slot(slot, facing)
 		soldiers.append(soldier)
@@ -59,6 +70,7 @@ func _ready() -> void:
 	_rebuild_debug_mesh()
 
 func _process(_delta: float) -> void:
+	_update_ability_state(_delta)
 	if selected or local_melee_debug_enabled:
 		_rebuild_debug_mesh()
 
@@ -74,6 +86,7 @@ func _physics_process(delta: float) -> void:
 func issue_order(new_destination: Vector3, new_facing: Vector3) -> void:
 	if combat_state == CombatState.DEFEATED:
 		return
+	_cancel_active_ability()
 	destination = _flat(new_destination)
 	facing = _safe_facing(new_facing, facing)
 	combat_state = CombatState.MOVING
@@ -146,6 +159,75 @@ func get_health_ratio() -> float:
 		return 0.0
 	return current_health / max_health
 
+func is_cavalry() -> bool:
+	return unit_definition != null and unit_definition.unit_type == UnitDefinition.UnitType.CAVALRY
+
+func is_spearmen() -> bool:
+	return not is_cavalry()
+
+func get_melee_attack_per_second() -> float:
+	return unit_definition.melee_attack_per_second if unit_definition != null else 5.0
+
+func get_ability_state_name() -> String:
+	match ability_state:
+		AbilityState.BRACE_PREPARING: return "BRACE PREPARING"
+		AbilityState.BRACED: return "BRACED"
+		AbilityState.CAVALRY_READY: return "CHARGE READY"
+		AbilityState.CAVALRY_CHARGING: return "CHARGING"
+		AbilityState.CAVALRY_NEEDS_RESET: return "CHARGE RESET"
+	return "NONE"
+
+func toggle_brace() -> bool:
+	if not is_spearmen() or combat_state == CombatState.DEFEATED:
+		return false
+	if ability_state == AbilityState.BRACED or ability_state == AbilityState.BRACE_PREPARING:
+		_cancel_brace()
+		return false
+	if not _is_effectively_stationary():
+		return false
+	ability_state = AbilityState.BRACE_PREPARING
+	_brace_remaining = _brace_preparation_seconds()
+	return true
+
+func start_charge(target: Formation) -> bool:
+	if not is_cavalry() or ability_state != AbilityState.CAVALRY_READY or combat_state == CombatState.DEFEATED:
+		return false
+	if target == null or target.combat_state == CombatState.DEFEATED or target.team_id == team_id:
+		return false
+	var to_target := _safe_facing(target.get_current_center() - get_current_center(), facing)
+	var distance := get_current_center().distance_to(target.get_current_center())
+	var angle := rad_to_deg(acos(clampf(facing.dot(to_target), -1.0, 1.0)))
+	if distance < _minimum_charge_distance() or angle > _charge_facing_half_angle():
+		return false
+	_charge_target = target
+	_charge_start_center = get_current_center()
+	ability_state = AbilityState.CAVALRY_CHARGING
+	_set_soldier_speed_multiplier(_charge_speed_multiplier())
+	destination = target.get_current_center()
+	facing = to_target
+	_apply_slots(destination, facing)
+	return true
+
+func get_charge_target() -> Formation:
+	return _charge_target
+
+func get_charge_travelled() -> float:
+	return get_current_center().distance_to(_charge_start_center) if ability_state == AbilityState.CAVALRY_CHARGING else 0.0
+
+func is_charge_valid() -> bool:
+	return ability_state == AbilityState.CAVALRY_CHARGING and get_charge_travelled() >= _minimum_charge_distance()
+
+func consume_charge() -> void:
+	if ability_state != AbilityState.CAVALRY_CHARGING:
+		return
+	_last_charge_target = _charge_target
+	_charge_target = null
+	ability_state = AbilityState.CAVALRY_NEEDS_RESET
+	_set_soldier_speed_multiplier(1.0)
+
+func is_effectively_braced() -> bool:
+	return ability_state == AbilityState.BRACED
+
 func set_combat_state(new_state: int, target: Formation = null) -> void:
 	if combat_state == CombatState.DEFEATED:
 		return
@@ -166,6 +248,7 @@ func disengage() -> void:
 	receiving_direction = "NONE"
 	var still_moving := get_current_center().distance_squared_to(destination) > 0.01
 	combat_state = CombatState.MOVING if still_moving else CombatState.IDLE
+	_try_rearm_charge()
 
 func halt_movement() -> void:
 	if combat_state == CombatState.DEFEATED:
@@ -175,6 +258,13 @@ func halt_movement() -> void:
 	combat_state = CombatState.IDLE
 	combat_target = null
 	_clear_local_melee_targets()
+
+func hold_position_in_combat() -> void:
+	if combat_state == CombatState.DEFEATED:
+		return
+	destination = get_current_center()
+	_apply_slots(destination, facing)
+	combat_state = CombatState.ENGAGED
 
 func get_state_name() -> String:
 	match combat_state:
@@ -206,7 +296,87 @@ func receive_damage(amount: float, incoming_direction: String, attacker_position
 		combat_state = CombatState.DEFEATED
 		combat_target = null
 		_clear_local_melee_targets()
+		_cancel_active_ability()
 	return applied_damage
+
+func _apply_unit_definition() -> void:
+	if unit_definition == null:
+		ability_state = AbilityState.NONE
+		return
+	unit_name = unit_definition.display_name
+	soldier_speed = unit_definition.movement_speed
+	spacing = unit_definition.spacing
+	melee_range = unit_definition.melee_range
+	ability_state = AbilityState.CAVALRY_READY if is_cavalry() else AbilityState.NONE
+
+func _update_ability_state(delta: float) -> void:
+	if ability_state == AbilityState.BRACE_PREPARING:
+		if not _is_effectively_stationary():
+			_cancel_brace()
+			return
+		_brace_remaining -= delta
+		if _brace_remaining <= 0.0:
+			ability_state = AbilityState.BRACED
+			brace_facing = facing
+	elif ability_state == AbilityState.BRACED and (not _is_effectively_stationary() or facing.dot(brace_facing) < 0.995):
+		_cancel_brace()
+	elif ability_state == AbilityState.CAVALRY_CHARGING:
+		if _charge_target == null or not is_instance_valid(_charge_target) or _charge_target.combat_state == CombatState.DEFEATED:
+			_cancel_charge(false)
+	elif ability_state == AbilityState.CAVALRY_NEEDS_RESET:
+		_try_rearm_charge()
+
+func _cancel_active_ability() -> void:
+	if ability_state == AbilityState.BRACED or ability_state == AbilityState.BRACE_PREPARING:
+		_cancel_brace()
+	elif ability_state == AbilityState.CAVALRY_CHARGING:
+		_cancel_charge(false)
+
+func _cancel_brace() -> void:
+	if ability_state == AbilityState.BRACED or ability_state == AbilityState.BRACE_PREPARING:
+		ability_state = AbilityState.NONE
+		_brace_remaining = 0.0
+
+func _cancel_charge(consumed: bool) -> void:
+	if ability_state != AbilityState.CAVALRY_CHARGING:
+		return
+	_last_charge_target = _charge_target if consumed else null
+	_charge_target = null
+	ability_state = AbilityState.CAVALRY_NEEDS_RESET if consumed else AbilityState.CAVALRY_READY
+	_set_soldier_speed_multiplier(1.0)
+
+func _try_rearm_charge() -> void:
+	if ability_state != AbilityState.CAVALRY_NEEDS_RESET:
+		return
+	if _last_charge_target == null or not is_instance_valid(_last_charge_target) or get_current_center().distance_to(_last_charge_target.get_current_center()) >= _minimum_charge_distance():
+		ability_state = AbilityState.CAVALRY_READY
+		_last_charge_target = null
+
+func _set_soldier_speed_multiplier(multiplier: float) -> void:
+	for soldier in soldiers:
+		if soldier.is_alive:
+			soldier.movement_speed = soldier_speed * multiplier
+
+func _is_effectively_stationary() -> bool:
+	return get_current_center().distance_to(destination) <= _brace_stationary_distance()
+
+func _minimum_charge_distance() -> float:
+	return unit_definition.minimum_charge_distance if unit_definition != null else 7.0
+
+func _charge_speed_multiplier() -> float:
+	return unit_definition.charge_speed_multiplier if unit_definition != null else 1.5
+
+func _charge_facing_half_angle() -> float:
+	return unit_definition.charge_facing_half_angle_degrees if unit_definition != null else 35.0
+
+func _brace_preparation_seconds() -> float:
+	return unit_definition.brace_preparation_seconds if unit_definition != null else 0.6
+
+func _brace_stationary_distance() -> float:
+	return unit_definition.brace_stationary_distance if unit_definition != null else 0.2
+
+func _get_placeholder_scale() -> Vector3:
+	return unit_definition.placeholder_scale if unit_definition != null else Vector3.ONE
 
 func _find_closest_soldier(living: Array[Soldier], world_position: Vector3) -> Soldier:
 	var candidates: Array[Soldier] = []
@@ -336,6 +506,7 @@ func _rebuild_debug_mesh() -> void:
 		_draw_formation_debug(_preview_destination, _preview_facing, Color(0.15, 0.95, 1.0, 0.95))
 	if local_melee_debug_enabled:
 		_draw_local_melee_debug()
+		_draw_ability_debug()
 	_debug_mesh.surface_end()
 
 func _draw_local_melee_debug() -> void:
@@ -347,6 +518,13 @@ func _draw_local_melee_debug() -> void:
 		var slot_position := to_local(soldier.desired_slot) + Vector3.UP * 0.12
 		_add_line(soldier_position, target_position, Color(1.0, 0.2, 0.8, 0.95))
 		_add_line(soldier_position, slot_position, Color(0.2, 0.9, 1.0, 0.75))
+
+func _draw_ability_debug() -> void:
+	var center := to_local(get_current_center()) + Vector3.UP * 0.2
+	if ability_state == AbilityState.BRACED or ability_state == AbilityState.BRACE_PREPARING:
+		_add_line(center, center + brace_facing * 2.5, Color(0.3, 0.9, 1.0, 0.95))
+	if ability_state == AbilityState.CAVALRY_CHARGING and _charge_target != null and is_instance_valid(_charge_target):
+		_add_line(center, to_local(_charge_target.get_current_center()) + Vector3.UP * 0.2, Color(1.0, 0.35, 0.1, 0.95))
 
 func _draw_current_center(color: Color) -> void:
 	var center := to_local(get_current_center()) + Vector3.UP * 0.05

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="UnitDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/units/unit_definition.gd" id="1_unit"]
+
+[resource]
+script = ExtResource("1_unit")
+unit_type = 0
+display_name = "Spearmen"
+movement_speed = 7.0
+spacing = 1.4
+melee_attack_per_second = 5.0
+melee_range = 1.75
+placeholder_color = Color(0.32, 0.65, 0.95, 1)
