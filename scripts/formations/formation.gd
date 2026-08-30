@@ -48,6 +48,8 @@ var _brace_remaining := 0.0
 var _charge_target: Formation
 var _charge_start_center := Vector3.ZERO
 var _last_charge_target: Formation
+var ranged_target: Formation
+var ranged_volley_cooldown := 0.0
 
 func _ready() -> void:
 	_apply_unit_definition()
@@ -71,6 +73,7 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_update_ability_state(_delta)
+	ranged_volley_cooldown = maxf(0.0, ranged_volley_cooldown - _delta)
 	if selected or local_melee_debug_enabled:
 		_rebuild_debug_mesh()
 
@@ -87,6 +90,7 @@ func issue_order(new_destination: Vector3, new_facing: Vector3) -> void:
 	if combat_state == CombatState.DEFEATED:
 		return
 	_cancel_active_ability()
+	clear_ranged_target()
 	destination = _flat(new_destination)
 	facing = _safe_facing(new_facing, facing)
 	combat_state = CombatState.MOVING
@@ -163,10 +167,59 @@ func is_cavalry() -> bool:
 	return unit_definition != null and unit_definition.unit_type == UnitDefinition.UnitType.CAVALRY
 
 func is_spearmen() -> bool:
-	return not is_cavalry()
+	return unit_definition == null or unit_definition.unit_type == UnitDefinition.UnitType.SPEARMEN
+
+func is_archer() -> bool:
+	return unit_definition != null and unit_definition.unit_type == UnitDefinition.UnitType.ARCHERS
 
 func get_melee_attack_per_second() -> float:
 	return unit_definition.melee_attack_per_second if unit_definition != null else 5.0
+
+func set_ranged_target(target: Formation) -> bool:
+	if not is_archer() or target == null or target.team_id == team_id or target.combat_state == CombatState.DEFEATED:
+		return false
+	ranged_target = target
+	return true
+
+func clear_ranged_target() -> void:
+	ranged_target = null
+
+func get_ranged_target() -> Formation:
+	if ranged_target == null or not is_instance_valid(ranged_target) or ranged_target.combat_state == CombatState.DEFEATED:
+		ranged_target = null
+	return ranged_target
+
+func get_ranged_distance() -> float:
+	var target := get_ranged_target()
+	return get_current_center().distance_to(target.get_current_center()) if target != null else 0.0
+
+func get_ranged_status() -> String:
+	if not is_archer():
+		return "NONE"
+	var target := get_ranged_target()
+	if target == null:
+		return "NO TARGET"
+	if combat_target != null and combat_target.combat_target == self:
+		return "SUPPRESSED BY MELEE"
+	if get_ranged_distance() > unit_definition.ranged_max_range:
+		return "OUT OF RANGE"
+	var to_target := _safe_facing(target.get_current_center() - get_current_center(), facing)
+	if facing.dot(to_target) < 0.995:
+		return "TURNING"
+	if ranged_volley_cooldown > 0.0:
+		return "RELOADING"
+	return "FIRING"
+
+func prepare_ranged_volley() -> bool:
+	if get_ranged_status() == "TURNING":
+		var target := get_ranged_target()
+		facing = _safe_facing(target.get_current_center() - get_current_center(), facing)
+		_apply_slots(destination, facing)
+		return false
+	if get_ranged_status() != "FIRING":
+		return false
+	ranged_volley_cooldown = unit_definition.ranged_volley_interval
+	return true
 
 func get_ability_state_name() -> String:
 	match ability_state:
@@ -275,6 +328,12 @@ func get_state_name() -> String:
 	return "UNKNOWN"
 
 func receive_damage(amount: float, incoming_direction: String, attacker_position: Vector3) -> float:
+	return _receive_damage(amount, incoming_direction, attacker_position, Vector3.INF)
+
+func receive_ranged_damage(amount: float, impact_position: Vector3, attacker_position: Vector3) -> float:
+	return _receive_damage(amount, "RANGED", attacker_position, impact_position)
+
+func _receive_damage(amount: float, incoming_direction: String, attacker_position: Vector3, impact_position: Vector3) -> float:
 	if combat_state == CombatState.DEFEATED:
 		return 0.0
 	var previous_health := current_health
@@ -289,7 +348,7 @@ func receive_damage(amount: float, incoming_direction: String, attacker_position
 		var living := get_living_soldiers()
 		if living.is_empty():
 			break
-		var casualty := _find_closest_soldier(living, attacker_position)
+		var casualty := _find_ranged_casualty(living, impact_position) if impact_position.is_finite() else _find_closest_soldier(living, attacker_position)
 		casualty.die()
 	_apply_slots(destination, facing)
 	if get_alive_count() == 0:
@@ -393,6 +452,11 @@ func _find_closest_soldier(living: Array[Soldier], world_position: Vector3) -> S
 			closest = soldier
 			closest_distance = distance
 	return closest
+
+func _find_ranged_casualty(living: Array[Soldier], impact_position: Vector3) -> Soldier:
+	var nearby: Array[Soldier] = living.duplicate()
+	nearby.sort_custom(func(first: Soldier, second: Soldier) -> bool: return first.global_position.distance_squared_to(impact_position) < second.global_position.distance_squared_to(impact_position))
+	return nearby[randi() % mini(4, nearby.size())]
 
 func _apply_slots(center: Vector3, direction: Vector3) -> void:
 	var living := get_living_soldiers()
@@ -525,6 +589,21 @@ func _draw_ability_debug() -> void:
 		_add_line(center, center + brace_facing * 2.5, Color(0.3, 0.9, 1.0, 0.95))
 	if ability_state == AbilityState.CAVALRY_CHARGING and _charge_target != null and is_instance_valid(_charge_target):
 		_add_line(center, to_local(_charge_target.get_current_center()) + Vector3.UP * 0.2, Color(1.0, 0.35, 0.1, 0.95))
+	if is_archer():
+		_draw_ranged_debug(center)
+
+func _draw_ranged_debug(center: Vector3) -> void:
+	var color := Color(0.35, 0.95, 0.45, 0.5)
+	var radius := unit_definition.ranged_max_range
+	var previous := center + Vector3(radius, 0.0, 0.0)
+	for index in range(1, 25):
+		var angle := TAU * float(index) / 24.0
+		var current := center + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+		_add_line(previous, current, color)
+		previous = current
+	var target := get_ranged_target()
+	if target != null:
+		_add_line(center, to_local(target.get_current_center()) + Vector3.UP * 0.2, Color(0.3, 1.0, 0.4, 0.95))
 
 func _draw_current_center(color: Color) -> void:
 	var center := to_local(get_current_center()) + Vector3.UP * 0.05

@@ -23,14 +23,18 @@ var formations: Array[Formation] = []
 var enemy_chase_enabled := true
 var battle_over := false
 var _tick_accumulator := 0.0
+var arrow_volley_visuals: Node
 
 class MeleeContact:
 	var active_count := 0
 	var attacker_position := Vector3.ZERO
 	var defender_position := Vector3.ZERO
 
-func configure(registered_formations: Array[Formation]) -> void:
+func configure(registered_formations: Array[Formation], volley_visuals: Node = null) -> void:
 	formations = registered_formations
+	arrow_volley_visuals = volley_visuals
+	if arrow_volley_visuals != null and not arrow_volley_visuals.is_connected("volley_landed", _on_ranged_volley_landed):
+		arrow_volley_visuals.connect("volley_landed", _on_ranged_volley_landed)
 
 func toggle_enemy_chase() -> bool:
 	enemy_chase_enabled = not enemy_chase_enabled
@@ -71,6 +75,7 @@ func _physics_process(delta: float) -> void:
 		_update_enemy_pursuit()
 	_establish_nearby_engagements()
 	_resolve_charge_impacts()
+	_update_ranged_volleys()
 	_tick_accumulator += delta
 	while _tick_accumulator >= combat_tick_seconds and not battle_over:
 		_tick_accumulator -= combat_tick_seconds
@@ -151,6 +156,8 @@ func _apply_charge_impact(charger: Formation, defender: Formation, contact: Mele
 	var travel_factor := clampf(charger.get_charge_travelled() / definition.minimum_charge_distance, 1.0, 1.5)
 	var modifier := _get_charge_modifier(direction)
 	var damage := float(contact.active_count) * definition.charge_power_per_active_soldier * definition.charge_speed_multiplier * travel_factor * modifier
+	if charger.is_cavalry() and defender.is_archer():
+		damage *= definition.cavalry_vs_archer_damage_multiplier
 	var event_label := "CHARGE" if direction == FRONT else "%s CHARGE" % direction
 	if defender.is_effectively_braced() and direction == FRONT:
 		damage *= defender.unit_definition.brace_front_damage_multiplier
@@ -180,12 +187,34 @@ func _resolve_combat_tick() -> void:
 		_finish_battle()
 
 func _apply_normal_damage(attacker: Formation, defender: Formation, contact: MeleeContact, direction: String) -> void:
-	var damage := calculate_damage(attacker, contact.active_count, direction)
+	var damage := calculate_damage(attacker, defender, contact.active_count, direction)
 	if damage <= 0.0:
 		return
 	var applied := defender.receive_damage(damage, direction, contact.attacker_position)
 	if applied > 0.0:
 		damage_dealt.emit(contact.defender_position, applied, direction, get_direction_modifier(direction), "")
+
+func _update_ranged_volleys() -> void:
+	for attacker in formations:
+		if not attacker.is_archer() or attacker.combat_state == Formation.CombatState.DEFEATED:
+			continue
+		var target := attacker.get_ranged_target()
+		if target == null or not attacker.prepare_ranged_volley():
+			continue
+		var damage := float(attacker.get_alive_count()) * attacker.unit_definition.ranged_attack_per_volley
+		if arrow_volley_visuals != null:
+			arrow_volley_visuals.launch_volley(attacker, target, damage)
+		else:
+			_on_ranged_volley_landed(attacker, target, damage, target.get_current_center())
+
+func _on_ranged_volley_landed(attacker: Formation, target: Formation, amount: float, impact_position: Vector3) -> void:
+	if battle_over or target == null or not is_instance_valid(target) or target.combat_state == Formation.CombatState.DEFEATED:
+		return
+	var applied := target.receive_ranged_damage(amount, impact_position, attacker.get_current_center())
+	if applied > 0.0:
+		damage_dealt.emit(impact_position, applied, "RANGED", 1.0, "VOLLEY")
+	if _is_team_defeated(0) or _is_team_defeated(1):
+		_finish_battle()
 
 func classify_attack_direction(attacker: Formation, defender: Formation) -> String:
 	var defender_to_attacker := _flat_direction(attacker.get_current_center() - defender.get_current_center(), defender.facing)
@@ -231,8 +260,9 @@ func get_melee_contact(attacker: Formation, defender: Formation) -> MeleeContact
 		result.defender_position = defender_sum / float(result.active_count)
 	return result
 
-func calculate_damage(attacker: Formation, active_combatants: int, direction: String) -> float:
-	return float(active_combatants) * attacker.get_melee_attack_per_second() * get_direction_modifier(direction) * combat_tick_seconds
+func calculate_damage(attacker: Formation, defender: Formation, active_combatants: int, direction: String) -> float:
+	var matchup_modifier := attacker.unit_definition.cavalry_vs_archer_damage_multiplier if attacker.is_cavalry() and defender.is_archer() else 1.0
+	return float(active_combatants) * attacker.get_melee_attack_per_second() * matchup_modifier * get_direction_modifier(direction) * combat_tick_seconds
 
 func get_direction_modifier(direction: String) -> float:
 	match direction:

@@ -26,7 +26,8 @@ func _process(_delta: float) -> void:
 	if formation == null:
 		return
 	global_position = formation.get_current_center() + Vector3.UP * 2.1
-	_count_label.text = "%s\n%d / %d" % [formation.get_ability_state_name(), formation.get_alive_count(), formation.get_max_count()]
+	var status := formation.get_ranged_status() if formation.is_archer() else formation.get_ability_state_name()
+	_count_label.text = "%s\n%d / %d" % [status, formation.get_alive_count(), formation.get_max_count()]
 	var ratio := formation.get_health_ratio()
 	_bar_fill.scale.x = ratio
 	_bar_fill.position.x = -BAR_WIDTH * (1.0 - ratio) * 0.5

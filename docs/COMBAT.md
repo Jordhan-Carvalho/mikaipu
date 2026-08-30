@@ -14,6 +14,20 @@ The battle test now has player Spearmen (30) and Cavalry (18), against matching 
 
 Charge and counter impacts still use aggregate formation HP and the existing casualty-selection and floating-feedback systems. Cavalry soldiers stay in formation slots during the approach; local melee resumes after impact. These values are deliberate PoC tuning, not final balance.
 
+## Milestone 4: Archers and ranged volleys
+
+Archers use the existing Formation and aggregate-HP model. The player explicitly assigns a ranged target by selecting Archers and right-clicking an enemy formation. Ground right-click remains a movement order and clears the ranged target.
+
+- Initial Archer formation: 24 soldiers, 8 columns, 1.7 spacing, 6.5 movement speed, 1.5 melee attack per second, and 25m maximum range.
+- Archers do not chase an out-of-range target. They show `OUT OF RANGE` until the player repositions them.
+- In range, Archers automatically rotate their formation to face the target, then fire a volley every 2 seconds.
+- A volley deals `living Archers × 6` aggregate damage. It creates up to 12 visual arrows, distributed around living target soldiers. Arrow collision is visual only; aggregate damage lands once the volley reaches its target.
+- Ranged casualties are selected from a randomized group of soldiers nearest the volley impact location. Melee and charge casualty rules are unchanged.
+- Reciprocal melee engagement suppresses ranged fire immediately. Archers then use the normal local-melee system and are intentionally weak in melee.
+- Cavalry melee and charge damage against Archers currently gain a temporary 2.0x matchup multiplier.
+
+These range, damage, projectile, and matchup values are PoC tuning only. There is no accuracy, terrain cover, line of sight, ammunition, or individual projectile damage authority yet.
+
 ## Milestone 2 baseline
 
 Milestone 2 introduced 30-soldier Spearmen formations and formation-level combat every 0.5 seconds, not independent soldier targeting. Milestone 3 retains this baseline for normal melee and extends it with Cavalry charge and Spearmen Brace.

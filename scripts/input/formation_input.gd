@@ -1,10 +1,14 @@
 extends Node
 
+signal ranged_attack_requested(attacker: Formation, target: Formation)
+
 @export var camera_path: NodePath
 @export var player_formation_paths: Array[NodePath] = []
+@export var enemy_formation_paths: Array[NodePath] = []
 @export var drag_threshold_pixels := 8.0
 @onready var _camera: Camera3D = get_node(camera_path)
 var _formations: Array[Formation] = []
+var _enemy_formations: Array[Formation] = []
 var _selected_formation: Formation
 var _right_dragging := false
 var _drag_start_screen := Vector2.ZERO
@@ -13,6 +17,8 @@ var _drag_start_world := Vector3.ZERO
 func _ready() -> void:
 	for formation_path in player_formation_paths:
 		_formations.append(get_node(formation_path) as Formation)
+	for formation_path in enemy_formation_paths:
+		_enemy_formations.append(get_node(formation_path) as Formation)
 
 func get_selected_formation() -> Formation:
 	return _selected_formation
@@ -29,8 +35,21 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 	if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_select_at(_ground_point(event.position))
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.pressed and _try_request_ranged_attack(event.position): return
 		if event.pressed: _begin_drag(event.position)
 		else: _commit_drag(event.position)
+
+func _try_request_ranged_attack(screen_position: Vector2) -> bool:
+	if _selected_formation == null or not _selected_formation.is_archer():
+		return false
+	var point := _ground_point(screen_position)
+	if not point.is_finite():
+		return false
+	for enemy in _enemy_formations:
+		if enemy.combat_state != Formation.CombatState.DEFEATED and enemy.contains_ground_point(point):
+			ranged_attack_requested.emit(_selected_formation, enemy)
+			return true
+	return false
 
 func _select_at(point: Vector3) -> void:
 	var selected: Formation

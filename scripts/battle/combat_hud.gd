@@ -35,6 +35,11 @@ func _process(_delta: float) -> void:
 		return
 	var selected: Formation = formation_input.call("get_selected_formation") as Formation
 	if selected == null:
-		_status_label.text = "Left click a player formation to select it.\nF enemy chase: %s\nQ: Cavalry charge / Spearmen Brace\nE: test enemy Cavalry charge\nG debug, R restart." % ("ON" if combat_resolver.enemy_chase_enabled else "STATIONARY")
+		_status_label.text = "Left click a player formation to select it.\nArcher: right-click enemy to fire.\nF enemy chase: %s\nQ: Cavalry charge / Spearmen Brace\nE: test enemy Cavalry charge\nG debug, R restart." % ("ON" if combat_resolver.enemy_chase_enabled else "STATIONARY")
 		return
-	_status_label.text = "%s\n%d / %d\nState: %s\nAbility: %s\nLocal melee: %d\nReceiving: %s ATTACK\nQ: %s\nF enemy chase: %s | E test enemy charge\nG debug, R restart." % [selected.unit_name, selected.get_alive_count(), selected.get_max_count(), selected.get_state_name(), selected.get_ability_state_name(), selected.get_local_melee_count(), selected.receiving_direction, "Charge nearest enemy" if selected.is_cavalry() else "Toggle Brace", "ON" if combat_resolver.enemy_chase_enabled else "STATIONARY"]
+	var ability_text := "Charge nearest enemy" if selected.is_cavalry() else "Toggle Brace" if selected.is_spearmen() else "None"
+	var ranged_text := ""
+	if selected.is_archer():
+		var target := selected.get_ranged_target()
+		ranged_text = "\nRanged: %s\nTarget: %s\nRange: %.1fm / %.1fm\nVolley: %.1fs" % [selected.get_ranged_status(), target.unit_name if target != null else "None", selected.get_ranged_distance(), selected.unit_definition.ranged_max_range, selected.ranged_volley_cooldown]
+	_status_label.text = "%s\n%d / %d\nState: %s\nAbility: %s%s\nLocal melee: %d\nReceiving: %s ATTACK\nQ: %s\nF enemy chase: %s | E test enemy charge\nG debug, R restart." % [selected.unit_name, selected.get_alive_count(), selected.get_max_count(), selected.get_state_name(), selected.get_ability_state_name(), ranged_text, selected.get_local_melee_count(), selected.receiving_direction, ability_text, "ON" if combat_resolver.enemy_chase_enabled else "STATIONARY"]

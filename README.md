@@ -1,6 +1,6 @@
 # Mikaipu
 
-Mikaipu is an experimental real-time strategy game. This repository currently contains a 3D proof of concept for formation movement, explicit facing, formation-level combat, Cavalry charges, and Spearmen Brace.
+Mikaipu is an experimental real-time strategy game. This repository currently contains a 3D proof of concept for formation movement, explicit facing, melee/ranged formation combat, Cavalry charges, Spearmen Brace, and Archers.
 
 ## Run
 
@@ -23,6 +23,7 @@ Godot 4.7.2 is installed locally. Restart Codex so it reloads the MCP configurat
 - **Left click**: select exactly one player formation (Spearmen or Cavalry).
 - **Right click ground**: move the selected formation while retaining its facing.
 - **Right-click drag**: choose its destination (where the drag starts) and facing (from start toward release). A cyan preview appears before release.
+- **Right-click enemy while Archers are selected**: assign that formation as the Archer ranged target.
 - **Escape**: cancel a pending right-click drag.
 - **Q**: with Cavalry selected, charge the nearest enemy; with Spearmen selected, toggle Brace.
 - **E**: test-only trigger for the enemy Cavalry to charge the nearest player formation.
@@ -54,4 +55,6 @@ During engagement, only nearby soldiers can temporarily leave their exact slots 
 - `scripts/units/soldier.gd` makes each visible soldier move directly toward its assigned slot and renders simple fallen casualties.
 - `scripts/input/formation_input.gd` raycasts the ground plane and translates mouse gestures into selection and movement orders.
 
-This milestone deliberately has no unit-level combat AI, pathfinding, persistence, multiplayer, world map, Captain, buildings, archers, or economy.
+Archers hold their position when a selected target is out of range. In range, they turn toward it and fire periodic visual volleys. They stop firing as soon as they enter melee, where they are deliberately weak. Spearmen and Cavalry retain their existing controls; Cavalry are especially dangerous when they reach exposed Archers.
+
+This milestone deliberately has no unit-level combat AI, pathfinding, persistence, multiplayer, world map, Captain, buildings, advanced line of sight, ammo, or economy.

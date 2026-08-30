@@ -1,7 +1,7 @@
 class_name UnitDefinition
 extends Resource
 
-enum UnitType { SPEARMEN, CAVALRY }
+enum UnitType { SPEARMEN, CAVALRY, ARCHERS }
 
 @export var unit_type := UnitType.SPEARMEN
 @export var display_name := "Spearmen"
@@ -11,6 +11,16 @@ enum UnitType { SPEARMEN, CAVALRY }
 @export var melee_range := 1.75
 @export var placeholder_color := Color("#d5bc70")
 @export var placeholder_scale := Vector3.ONE
+
+@export_category("Ranged Combat")
+@export var ranged_attack_per_volley := 0.0
+@export var ranged_max_range := 25.0
+@export var ranged_volley_interval := 2.0
+@export var projectile_speed := 24.0
+@export var visual_projectiles_per_volley := 12
+
+@export_category("Unit Matchups")
+@export var cavalry_vs_archer_damage_multiplier := 2.0
 
 @export_category("Cavalry Charge")
 @export var charge_speed_multiplier := 1.5
